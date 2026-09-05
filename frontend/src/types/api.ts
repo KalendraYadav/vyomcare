@@ -57,7 +57,7 @@ export interface CreateUserDto {
   name: string;
   email: string;
   phone?: string;
-  password: string;
+  password?: string;
   role: UserRole;
   facilityId?: string;
 }
@@ -112,6 +112,7 @@ export interface WasteBatchesFilterParams {
   categoryId?: string;
   limit?: number;
   offset?: number;
+  page?: number;
 }
 
 export interface ScanDto {
@@ -139,8 +140,7 @@ export interface VerifyArrivalDto {
 }
 
 export interface ConfirmTreatmentDto {
-  notes?: string;
-  photoUrl?: string;
+  photoUrl: string;
   latitude?: number;
   longitude?: number;
 }
@@ -167,7 +167,7 @@ export interface AlertsFilterParams {
   type?: AlertType;
   severity?: AlertSeverity;
   limit?: number;
-  offset?: number;
+  page?: number;
 }
 
 export interface UpdateAlertDto {
@@ -178,10 +178,12 @@ export interface UpdateAlertDto {
 // ─── Dashboards Module ──────────────────────────────────────────────────────
 
 export interface CategoryBreakdown {
-  name: string;
-  color: string;
-  count: number;
-  weight: number;
+  categoryId: string;
+  _count: number;
+  name?: string;
+  color?: string;
+  count?: number;
+  weight?: number;
 }
 
 export interface HospitalDashboardData {

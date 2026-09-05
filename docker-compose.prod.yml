@@ -1,0 +1,156 @@
+# ─── VyomCare / BioTrack — Production Docker Compose ─────────────────────────
+#
+# Production topology:
+#
+#                    INTERNET (Client / Browser)
+#                               |
+#                         HTTP/HTTPS (:80/:443)
+#                               |
+#                    Reverse Proxy (Nginx)
+#                       /         \
+#                      /           \
+#               Next.js (3000)   NestJS API (3001) + WebSockets
+#                                   |          |
+#                                 MySQL      Redis
+#                                (3306)     (6379)
+#
+# Zero direct external exposure of MySQL, Redis, or Node internal ports.
+# ──────────────────────────────────────────────────────────────────────────────
+
+services:
+  # ─── MySQL 8.0 Database ───────────────────────────────────────────────────
+  mysql:
+    image: mysql:8.0
+    container_name: biotrack_prod_mysql
+    restart: always
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-biotrack_prod}
+      MYSQL_USER: ${MYSQL_USER:-biotrack_app}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+      - --default-authentication-plugin=mysql_native_password
+    volumes:
+      - mysql_prod_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p$${MYSQL_ROOT_PASSWORD}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    networks:
+      - biotrack_internal
+
+  # ─── Redis 7.0 In-Memory Store & BullMQ Queue ──────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: biotrack_prod_redis
+    restart: always
+    command: redis-server --save 60 1 --loglevel warning
+    volumes:
+      - redis_prod_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+    networks:
+      - biotrack_internal
+
+  # ─── NestJS Backend API + BullMQ Worker ───────────────────────────────────
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: biotrack_prod_backend
+    restart: always
+    environment:
+      NODE_ENV: production
+      PORT: 3001
+      DATABASE_URL: mysql://${MYSQL_USER:-biotrack_app}:${MYSQL_PASSWORD}@mysql:3306/${MYSQL_DATABASE:-biotrack_prod}
+      REDIS_URL: redis://redis:6379
+      JWT_SECRET: ${JWT_SECRET}
+      JWT_EXPIRY: ${JWT_EXPIRY:-15m}
+      REFRESH_TOKEN_SECRET: ${REFRESH_TOKEN_SECRET}
+      REFRESH_TOKEN_EXPIRY: ${REFRESH_TOKEN_EXPIRY:-7d}
+      CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost}
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3001/api"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 25s
+    networks:
+      - biotrack_internal
+    expose:
+      - "3001"
+
+  # ─── Next.js 16 Production Frontend ───────────────────────────────────────
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-/api}
+        NEXT_PUBLIC_SOCKET_URL: ${NEXT_PUBLIC_SOCKET_URL:-/notifications}
+    container_name: biotrack_prod_frontend
+    restart: always
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      HOSTNAME: "0.0.0.0"
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3000/"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    networks:
+      - biotrack_internal
+    expose:
+      - "3000"
+
+  # ─── Nginx Reverse Proxy & TLS Gateway ────────────────────────────────────
+  nginx:
+    image: nginx:1.27-alpine
+    container_name: biotrack_prod_proxy
+    restart: always
+    ports:
+      - "${HTTP_PORT:-80}:80"
+      - "${HTTPS_PORT:-443}:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - nginx_logs:/var/log/nginx
+    depends_on:
+      frontend:
+        condition: service_healthy
+      backend:
+        condition: service_healthy
+    networks:
+      - biotrack_internal
+
+# ─── Persistent Volumes ─────────────────────────────────────────────────────
+volumes:
+  mysql_prod_data:
+    name: biotrack_mysql_prod_data
+  redis_prod_data:
+    name: biotrack_redis_prod_data
+  nginx_logs:
+    name: biotrack_nginx_logs
+
+# ─── Isolated Production Network ────────────────────────────────────────────
+networks:
+  biotrack_internal:
+    name: biotrack_prod_network
+    driver: bridge

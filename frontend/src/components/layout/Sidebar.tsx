@@ -118,8 +118,8 @@ function getNavItems(role?: string): { section?: string; items: NavItem[] }[] {
         {
           section: 'REGULATORY SETTINGS',
           items: [
+            { label: 'Facilities Directory', href: '/admin/facilities', icon: Building2 },
             { label: 'SLA Thresholds', href: '/admin/compliance-rules', icon: ShieldCheck },
-            { label: 'Audit Log', href: '/admin/audit-log', icon: Activity },
           ],
         },
       ];
@@ -138,6 +138,7 @@ function getNavItems(role?: string): { section?: string; items: NavItem[] }[] {
         {
           section: 'GOVERNANCE & ADMIN',
           items: [
+            { label: 'Admin Hub', href: '/admin', icon: LayoutDashboard },
             { label: 'Facilities Desk', href: '/admin/facilities', icon: Building2 },
             { label: 'User Directory', href: '/admin/users', icon: Users },
             { label: 'Waste Categories', href: '/admin/waste-categories', icon: Package },

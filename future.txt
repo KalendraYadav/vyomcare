@@ -1,0 +1,222 @@
+PHASE 10 IMPLEMENTATION COMPLETE. EXTERNAL PRODUCTION CONFIGURATION REMAINS.
+
+
+#TO START THE SERVER:-
+cd backend
+npm run start:dev
+
+
+cd frontend
+npm run dev
+
+
+
+
+
+#keys to connect with the workbench:-
+
+
+Connection Name : BioTrack Dev
+Connection      : Standard (TCP/IP)
+Hostname        : 127.0.0.1
+Port            : 3306
+Username        : biotrack
+Password        : BioTrack_Dev_2026!
+Default Schema  : biotrack_dev
+
+
+
+
+#command to run in the workbench:-
+
+-- ============================================================
+-- BioTrack Pro — MySQL Workbench Development Queries
+-- Database: biotrack_dev
+-- ============================================================
+
+
+-- 1. Select the BioTrack development database
+USE biotrack_dev;
+
+
+-- 2. Show all tables
+SHOW TABLES;
+
+
+-- ============================================================
+-- DATABASE STRUCTURE
+-- ============================================================
+
+-- 3. Describe the users table
+DESCRIBE user;
+
+-- 4. Describe facilities
+DESCRIBE facility;
+
+-- 5. Describe waste batches
+DESCRIBE waste_batch;
+
+-- 6. Describe waste categories
+DESCRIBE waste_category;
+
+-- 7. Describe custody events
+DESCRIBE custody_event;
+
+
+-- ============================================================
+-- VIEW APPLICATION DATA
+-- ============================================================
+
+-- 8. View all users
+SELECT * FROM user;
+
+-- 9. View useful user information
+SELECT id, email, role, isActive
+FROM user;
+
+
+-- 10. View all facilities
+SELECT * FROM facility;
+
+-- 11. View useful facility information
+SELECT id, name, type, status
+FROM facility;
+
+
+-- 12. View all waste batches
+SELECT * FROM waste_batch;
+
+-- 13. View newest waste batches first
+SELECT *
+FROM waste_batch
+ORDER BY createdAt DESC
+LIMIT 10;
+
+
+-- 14. View waste categories
+SELECT * FROM waste_category;
+
+
+-- 15. View custody events
+SELECT * FROM custody_event;
+
+
+-- ============================================================
+-- DATA COUNTS
+-- ============================================================
+
+-- 16. Count users
+SELECT COUNT(*) AS total_users
+FROM user;
+
+
+-- 17. Count facilities
+SELECT COUNT(*) AS total_facilities
+FROM facility;
+
+
+-- 18. Count waste batches
+SELECT COUNT(*) AS total_waste_batches
+FROM waste_batch;
+
+
+-- 19. Count custody events
+SELECT COUNT(*) AS total_custody_events
+FROM custody_event;
+
+
+-- 20. Count waste categories
+SELECT COUNT(*) AS total_waste_categories
+FROM waste_category;
+
+
+-- ============================================================
+-- BASIC BIO TRACK ANALYSIS
+-- ============================================================
+
+-- 21. Count batches by status
+SELECT status, COUNT(*) AS total
+FROM waste_batch
+GROUP BY status;
+
+
+-- 22. Count batches by category
+SELECT wasteCategoryId, COUNT(*) AS total
+FROM waste_batch
+GROUP BY wasteCategoryId;
+
+
+-- 23. Count users by role
+SELECT role, COUNT(*) AS total
+FROM user
+GROUP BY role;
+
+
+-- 24. Count facilities by type
+SELECT type, COUNT(*) AS total
+FROM facility
+GROUP BY type;
+
+
+-- 25. Count facilities by status
+SELECT status, COUNT(*) AS total
+FROM facility
+GROUP BY status;
+
+
+-- ============================================================
+-- OTHER TABLES
+-- ============================================================
+
+-- 26. Alerts
+SELECT * FROM alert;
+
+
+-- 27. Audit logs
+SELECT * FROM audit_log;
+
+
+-- 28. Compliance rules
+SELECT * FROM compliance_rule;
+
+
+-- 29. GPS pings
+SELECT * FROM gps_ping;
+
+
+-- 30. Notifications
+SELECT * FROM notification;
+
+
+-- 31. QR codes
+SELECT * FROM qr_code;
+
+
+-- 32. Refresh tokens
+SELECT * FROM refresh_token;
+
+
+-- 33. Transport assignments
+SELECT * FROM transport_assignment;
+
+
+-- 34. Vehicles
+SELECT * FROM vehicle;
+
+
+-- ============================================================
+-- COMPLETE TABLE LIST
+-- ============================================================
+
+-- 35. Show tables again
+SHOW TABLES;
+
+
+
+#MOCKED EMAIL: (select the hospital staff before entering)
+
+Official Email Address:
+staff@citygeneral.in
+
+Security Password:
+BioTrack@2026

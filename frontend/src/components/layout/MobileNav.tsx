@@ -77,7 +77,7 @@ export const MobileNav: React.FC = () => {
 
       {/* Quick Menu / Profile */}
       <Link
-        href="/hospital/dashboard"
+        href={dashboardPath}
         className="flex flex-col items-center justify-center min-w-[60px] h-full text-neutral-500 hover:text-neutral-800 transition-colors"
       >
         <User className="w-5 h-5" />

@@ -30,6 +30,7 @@ async function bootstrap() {
   validateEnvironment();
 
   const app = await NestFactory.create(AppModule);
+  app.enableShutdownHooks();
 
   // Security
   app.use(helmet());
@@ -37,8 +38,11 @@ async function bootstrap() {
 
   // CORS — uses CORS_ORIGIN env var (falls back to localhost for convenience)
   // Development: http://localhost:3000
-  // Production:  set CORS_ORIGIN to your production frontend URL
-  const corsOrigin = process.env.CORS_ORIGIN || 'http://localhost:3000';
+  // Production:  set CORS_ORIGIN to your production frontend URL (or comma-separated URLs)
+  const rawCorsOrigin = process.env.CORS_ORIGIN || 'http://localhost:3000';
+  const corsOrigin = rawCorsOrigin.includes(',')
+    ? rawCorsOrigin.split(',').map((o) => o.trim())
+    : rawCorsOrigin;
   app.enableCors({
     origin: corsOrigin,
     credentials: true,

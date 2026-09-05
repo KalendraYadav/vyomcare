@@ -368,20 +368,42 @@ fully compatible with MySQL.
 
 ---
 
-## Production Migration
+## Production Deployment & Operations
 
-To move to production, only environment variable values change — no code changes:
+VyomCare / BioTrack includes a complete, production-grade containerization architecture with Nginx reverse proxy, multi-stage Docker builds, persistent storage volumes, automated migrations, and database backups.
 
-```env
-# Production backend .env
-DATABASE_URL=mysql://<PROD_USER>:<PROD_PASS>@<PROD_MYSQL_HOST>:3306/<PROD_DB>
-REDIS_URL=redis://<PROD_REDIS_HOST>:6379
-JWT_SECRET=<STRONG_64_BYTE_SECRET>
-REFRESH_TOKEN_SECRET=<DIFFERENT_STRONG_64_BYTE_SECRET>
-CORS_ORIGIN=https://your-frontend-domain.com
-NODE_ENV=production
+### Architecture Overview
+
+```text
+               Client (HTTPS :443 / HTTP :80)
+                             │
+                      Nginx Reverse Proxy
+                     ┌───────┴───────┐
+              / (Next.js)      /api/ & /socket.io/ (NestJS)
+                     │               │
+                     │         ┌─────┴─────┐
+                     │         │           │
+                     │       MySQL       Redis
 ```
 
-The application continues to use the same `DATABASE_URL` and `REDIS_URL` environment
-variables regardless of whether the services are Docker-managed, managed cloud services,
-or self-hosted.
+### Quick Production Deployment
+
+```bash
+# 1. Prepare production environment
+cp .env.production.example .env.production
+nano .env.production
+
+# 2. Build and launch production stack
+docker compose --env-file .env.production -f docker-compose.prod.yml up -d --build
+
+# 3. Verify container health
+docker compose --env-file .env.production -f docker-compose.prod.yml ps
+
+# 4. Check API status
+curl -i http://localhost/healthz
+```
+
+For comprehensive instructions on host hardening, Let's Encrypt TLS setup, automated nightly backups, disaster recovery, observability, and rollbacks, see the complete runbook:
+
+👉 **[DEPLOYMENT.md](file:///d:/web%20project/vyomcare/DEPLOYMENT.md)**
+

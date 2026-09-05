@@ -91,6 +91,14 @@ function LoginFormContent() {
       // 2. Fetch verified user profile & facility details from GET /api/users/me
       const profile = await usersApi.me();
 
+      // Deactivated account barrier
+      if ((profile as unknown as { status?: string }).status === 'DEACTIVATED') {
+        const { clearAuth } = useAuthStore.getState();
+        clearAuth();
+        setErrorMsg('Your account has been deactivated by administration. Please contact your system supervisor.');
+        return;
+      }
+
       // 3. Store in memory (Zustand & API client)
       setAuth(profile, loginRes.accessToken);
 

@@ -392,6 +392,8 @@ export const categoriesApi = {
     apiFetch<WasteCategory>('/waste-categories', { method: 'POST', body: dto }),
   update: (id: string, dto: Partial<WasteCategory>): Promise<WasteCategory> =>
     apiFetch<WasteCategory>(`/waste-categories/${id}`, { method: 'PATCH', body: dto }),
+  deactivate: (id: string): Promise<WasteCategory> =>
+    apiFetch<WasteCategory>(`/waste-categories/${id}`, { method: 'DELETE' }),
 };
 
 export const complianceApi = {
@@ -411,8 +413,8 @@ export const batchesApi = {
     if (params?.status) query.set('status', params.status);
     if (params?.hospitalId) query.set('hospitalId', params.hospitalId);
     if (params?.categoryId) query.set('categoryId', params.categoryId);
-    if (params?.limit !== undefined) query.set('limit', String(params.limit));
-    if (params?.offset !== undefined) query.set('offset', String(params.offset));
+    // Note: Backend waste-batches.service.ts does not parseInt(query.page/limit), causing Prisma take: '...' 500 error.
+    // We omit page/limit so backend defaults to numeric page=1, limit=25 safely.
     const qs = query.toString();
     return apiFetch<PaginatedResult<WasteBatch>>(`/waste-batches${qs ? `?${qs}` : ''}`);
   },
@@ -462,8 +464,8 @@ export const alertsApi = {
     if (params?.status) query.set('status', params.status);
     if (params?.type) query.set('type', params.type);
     if (params?.severity) query.set('severity', params.severity);
+    if (params?.page !== undefined) query.set('page', String(params.page));
     if (params?.limit !== undefined) query.set('limit', String(params.limit));
-    if (params?.offset !== undefined) query.set('offset', String(params.offset));
     const qs = query.toString();
     return apiFetch<PaginatedResult<Alert>>(`/alerts${qs ? `?${qs}` : ''}`);
   },
@@ -492,14 +494,11 @@ export const notificationsApi = {
 };
 
 export const auditLogApi = {
-  list: (params?: AuditLogFilterParams): Promise<PaginatedResult<AuditLog>> => {
+  list: (params?: AuditLogFilterParams): Promise<AuditLog[]> => {
     const query = new URLSearchParams();
     if (params?.entityType) query.set('entityType', params.entityType);
-    if (params?.entityId) query.set('entityId', params.entityId);
     if (params?.actorUserId) query.set('actorUserId', params.actorUserId);
-    if (params?.limit !== undefined) query.set('limit', String(params.limit));
-    if (params?.offset !== undefined) query.set('offset', String(params.offset));
     const qs = query.toString();
-    return apiFetch<PaginatedResult<AuditLog>>(`/audit-log${qs ? `?${qs}` : ''}`);
+    return apiFetch<AuditLog[]>(`/audit-log${qs ? `?${qs}` : ''}`);
   },
 };

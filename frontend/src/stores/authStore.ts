@@ -127,10 +127,10 @@ export function useCurrentUser() {
     canVerifyArrival: role === 'TREATMENT_FACILITY_STAFF',
     canConfirmTreatment: role === 'TREATMENT_FACILITY_STAFF',
     canViewGovernmentData: ['GOVERNMENT_AUTHORITY', 'SUPER_ADMIN'].includes(role || ''),
-    canManageUsers: ['HOSPITAL_ADMIN', 'TREATMENT_FACILITY_STAFF', 'SUPER_ADMIN'].includes(role || ''),
+    canManageUsers: ['HOSPITAL_ADMIN', 'SUPER_ADMIN'].includes(role || ''),
     canApproveFacilities: role === 'SUPER_ADMIN',
     canEditSla: ['GOVERNMENT_AUTHORITY', 'SUPER_ADMIN'].includes(role || ''),
-    canInspectAuditLog: ['GOVERNMENT_AUTHORITY', 'SUPER_ADMIN'].includes(role || ''),
+    canInspectAuditLog: role === 'SUPER_ADMIN',
 
     // Canonical navigation destination
     dashboardPath: getDashboardPath(role),
