@@ -1,226 +1,505 @@
+/**
+ * BioTrack / VyomCare — Centralized API Client & Error Foundation
+ * Source of truth: design.md §4, §16, §21 and verified NestJS backend
+ */
+
+import {
+  AuthUser,
+  User,
+  Facility,
+  WasteCategory,
+  ComplianceRule,
+  WasteBatch,
+  CustodyEvent,
+  QrCode,
+  Vehicle,
+  TransportAssignment,
+  GpsPing,
+  Alert,
+  Notification,
+  AuditLog,
+} from '@/types/models';
+
+import {
+  LoginDto,
+  LoginResponse,
+  RefreshResponse,
+  LogoutResponse,
+  CreateUserDto,
+  UsersFilterParams,
+  RegisterFacilityDto,
+  FacilitiesFilterParams,
+  ApproveFacilityDto,
+  CreateBatchDto,
+  WasteBatchesFilterParams,
+  ScanResponse,
+  CustodyHandoverDto,
+  VerifyArrivalDto,
+  ConfirmTreatmentDto,
+  CreateTransportAssignmentDto,
+  CreateGpsPingDto,
+  AlertsFilterParams,
+  UpdateAlertDto,
+  HospitalDashboardData,
+  FacilityDashboardData,
+  GovernmentDashboardData,
+  AuditLogFilterParams,
+  PaginatedResult,
+} from '@/types/api';
+
 const BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001/api';
 
-type RequestOptions = Omit<RequestInit, 'body'> & { body?: unknown };
+// ─── In-Memory Access Token (design.md §21) ──────────────────────────────────
+// Strictly kept in-memory to prevent XSS token theft. Never stored in localStorage.
+let inMemoryAccessToken: string | null = null;
 
-async function apiFetch<T>(path: string, options: RequestOptions = {}): Promise<T> {
-  const { body, headers = {}, ...rest } = options;
+export function getAccessToken(): string | null {
+  return inMemoryAccessToken;
+}
 
-  const res = await fetch(`${BASE_URL}${path}`, {
-    ...rest,
-    credentials: 'include', // send httpOnly cookies
-    headers: {
-      'Content-Type': 'application/json',
-      ...headers,
-    },
-    body: body !== undefined ? JSON.stringify(body) : undefined,
-  });
+export function setAccessToken(token: string | null): void {
+  inMemoryAccessToken = token;
+}
 
-  // Intercept 401 — attempt silent refresh
-  if (res.status === 401 && path !== '/auth/refresh' && path !== '/auth/login') {
-    const refreshed = await fetch(`${BASE_URL}/auth/refresh`, {
-      method: 'POST',
-      credentials: 'include',
-    });
-    if (refreshed.ok) {
-      // Retry original request
-      const retry = await fetch(`${BASE_URL}${path}`, {
-        ...rest,
-        credentials: 'include',
-        headers: { 'Content-Type': 'application/json', ...headers },
-        body: body !== undefined ? JSON.stringify(body) : undefined,
-      });
-      if (!retry.ok) throw new ApiError(retry.status, await retry.json().catch(() => ({})));
-      return retry.json();
+export function clearAccessToken(): void {
+  inMemoryAccessToken = null;
+}
+
+// ─── Error Handling Foundation ───────────────────────────────────────────────
+
+export type ApiErrorCode =
+  | 'BAD_REQUEST'
+  | 'UNAUTHORIZED'
+  | 'FORBIDDEN'
+  | 'NOT_FOUND'
+  | 'CONFLICT'
+  | 'VALIDATION_ERROR'
+  | 'RATE_LIMITED'
+  | 'SERVER_ERROR'
+  | 'NETWORK_ERROR'
+  | 'TIMEOUT'
+  | 'UNKNOWN';
+
+export class ApiError extends Error {
+  public status: number;
+  public code: ApiErrorCode;
+  public details?: unknown;
+
+  constructor(status: number, message: string, code?: ApiErrorCode, details?: unknown) {
+    super(message);
+    this.name = 'ApiError';
+    this.status = status;
+    this.details = details;
+
+    if (code) {
+      this.code = code;
     } else {
-      // Refresh failed — redirect to session expired
-      if (typeof window !== 'undefined') window.location.href = '/auth/session-expired';
-      throw new ApiError(401, { message: 'Session expired' });
+      switch (status) {
+        case 400:
+          this.code = 'BAD_REQUEST';
+          break;
+        case 401:
+          this.code = 'UNAUTHORIZED';
+          break;
+        case 403:
+          this.code = 'FORBIDDEN';
+          break;
+        case 404:
+          this.code = 'NOT_FOUND';
+          break;
+        case 409:
+          this.code = 'CONFLICT';
+          break;
+        case 422:
+          this.code = 'VALIDATION_ERROR';
+          break;
+        case 429:
+          this.code = 'RATE_LIMITED';
+          break;
+        case 500:
+        case 502:
+        case 503:
+          this.code = 'SERVER_ERROR';
+          break;
+        default:
+          this.code = status === 0 ? 'NETWORK_ERROR' : 'UNKNOWN';
+      }
+    }
+  }
+}
+
+/**
+ * Sanitizes and extracts an actionable, user-friendly error message.
+ * Prevents exposing SQL queries, stack traces, or internal server exceptions.
+ */
+export function getErrorMessage(err: unknown): string {
+  if (err instanceof ApiError) {
+    switch (err.code) {
+      case 'UNAUTHORIZED':
+        return 'Invalid credentials or session expired. Please sign in again.';
+      case 'FORBIDDEN':
+        return 'Access denied. Your role is not authorized to perform this action.';
+      case 'NOT_FOUND':
+        return 'The requested record or resource was not found.';
+      case 'CONFLICT':
+        return 'A record with this identifier already exists.';
+      case 'VALIDATION_ERROR':
+      case 'BAD_REQUEST':
+        return err.message || 'Validation error. Please verify input fields.';
+      case 'RATE_LIMITED':
+        return 'Too many requests. Please wait a moment before trying again.';
+      case 'SERVER_ERROR':
+        return 'Internal server error. Please try again or contact support.';
+      case 'NETWORK_ERROR':
+        return 'Network connection error. Please verify your internet connection.';
+      case 'TIMEOUT':
+        return 'Request timed out. Please try again.';
+      default:
+        return err.message || 'An unexpected error occurred.';
     }
   }
 
-  if (!res.ok) {
-    const data = await res.json().catch(() => ({}));
-    throw new ApiError(res.status, data);
+  if (err instanceof Error) {
+    return err.message;
   }
 
-  if (res.status === 204) return undefined as T;
-  return res.json();
+  return 'An unexpected error occurred. Please try again.';
 }
 
-export class ApiError extends Error {
-  constructor(
-    public status: number,
-    public data: Record<string, unknown>,
-  ) {
-    super((data?.message as string) || `HTTP ${status}`);
-  }
+// ─── Silent Refresh Concurrency Lock ─────────────────────────────────────────
+
+let isRefreshing = false;
+let refreshSubscribers: Array<(token: string | null) => void> = [];
+
+function subscribeTokenRefresh(cb: (token: string | null) => void) {
+  refreshSubscribers.push(cb);
 }
 
-// ─── Auth ─────────────────────────────────────────────────────────────────
-export const authApi = {
-  login: (email: string, password: string) =>
-    apiFetch<{ accessToken: string; user: AuthUser }>('/auth/login', { method: 'POST', body: { email, password } }),
-  logout: () => apiFetch('/auth/logout', { method: 'POST' }),
-  refresh: () => apiFetch<{ accessToken: string }>('/auth/refresh', { method: 'POST' }),
+function onRefreshed(token: string | null) {
+  refreshSubscribers.forEach((cb) => cb(token));
+  refreshSubscribers = [];
+}
+
+// ─── Fetch Wrapper with Bearer Auth & Silent Refresh ─────────────────────────
+
+type RequestOptions = Omit<RequestInit, 'body'> & {
+  body?: unknown;
+  timeoutMs?: number;
 };
 
-// ─── Users ────────────────────────────────────────────────────────────────
+export async function apiFetch<T>(path: string, options: RequestOptions = {}): Promise<T> {
+  const { body, headers = {}, timeoutMs = 15000, ...rest } = options;
+
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+  const reqHeaders: Record<string, string> = {
+    'Content-Type': 'application/json',
+    ...(headers as Record<string, string>),
+  };
+
+  if (inMemoryAccessToken) {
+    reqHeaders['Authorization'] = `Bearer ${inMemoryAccessToken}`;
+  }
+
+  try {
+    const res = await fetch(`${BASE_URL}${path}`, {
+      ...rest,
+      signal: controller.signal,
+      credentials: 'include', // Send httpOnly refresh_token cookie
+      headers: reqHeaders,
+      body: body !== undefined ? JSON.stringify(body) : undefined,
+    });
+
+    clearTimeout(timeoutId);
+
+    // ─── 401 Unauthorized Interception (design.md §16.1 & §21.2) ───────────
+    if (res.status === 401 && path !== '/auth/login' && path !== '/auth/refresh') {
+      if (!isRefreshing) {
+        isRefreshing = true;
+
+        try {
+          const refreshRes = await fetch(`${BASE_URL}/auth/refresh`, {
+            method: 'POST',
+            credentials: 'include',
+          });
+
+          if (refreshRes.ok) {
+            const data: RefreshResponse = await refreshRes.json();
+            setAccessToken(data.accessToken);
+            isRefreshing = false;
+            onRefreshed(data.accessToken);
+          } else {
+            // Refresh token expired or revoked
+            clearAccessToken();
+            isRefreshing = false;
+            onRefreshed(null);
+            if (typeof window !== 'undefined' && !window.location.pathname.startsWith('/login')) {
+              window.location.href = `/login?session=expired&redirect=${encodeURIComponent(window.location.pathname)}`;
+            }
+            throw new ApiError(401, 'Session expired. Please log in again.', 'UNAUTHORIZED');
+          }
+        } catch (refreshErr) {
+          isRefreshing = false;
+          onRefreshed(null);
+          clearAccessToken();
+          throw refreshErr instanceof ApiError
+            ? refreshErr
+            : new ApiError(401, 'Session refresh failed.', 'UNAUTHORIZED');
+        }
+      }
+
+      // Concurrently waiting requests wait for the active refresh to finish
+      return new Promise<T>((resolve, reject) => {
+        subscribeTokenRefresh(async (newToken) => {
+          if (!newToken) {
+            return reject(new ApiError(401, 'Session expired.', 'UNAUTHORIZED'));
+          }
+
+          try {
+            const retryHeaders = {
+              ...reqHeaders,
+              Authorization: `Bearer ${newToken}`,
+            };
+            const retryRes = await fetch(`${BASE_URL}${path}`, {
+              ...rest,
+              credentials: 'include',
+              headers: retryHeaders,
+              body: body !== undefined ? JSON.stringify(body) : undefined,
+            });
+
+            if (!retryRes.ok) {
+              const errData = await retryRes.json().catch(() => ({}));
+              const msg = (errData as { message?: string }).message || `HTTP ${retryRes.status}`;
+              return reject(new ApiError(retryRes.status, msg, undefined, errData));
+            }
+
+            if (retryRes.status === 204) {
+              return resolve(undefined as T);
+            }
+            const data = await retryRes.json();
+            return resolve(data as T);
+          } catch (retryErr) {
+            return reject(retryErr);
+          }
+        });
+      });
+    }
+
+    if (!res.ok) {
+      const errData = await res.json().catch(() => ({}));
+      const rawMessage = (errData as { message?: string | string[] }).message;
+      const message = Array.isArray(rawMessage)
+        ? rawMessage.join(', ')
+        : (rawMessage as string) || `HTTP ${res.status}`;
+
+      throw new ApiError(res.status, message, undefined, errData);
+    }
+
+    if (res.status === 204) {
+      return undefined as T;
+    }
+
+    return res.json();
+  } catch (error: unknown) {
+    clearTimeout(timeoutId);
+
+    if (error instanceof ApiError) {
+      throw error;
+    }
+
+    if (error instanceof DOMException && error.name === 'AbortError') {
+      throw new ApiError(0, 'Request timed out after 15 seconds.', 'TIMEOUT');
+    }
+
+    if (error instanceof TypeError && error.message.includes('fetch')) {
+      throw new ApiError(0, 'Unable to connect to BioTrack server. Verify network.', 'NETWORK_ERROR');
+    }
+
+    throw new ApiError(0, (error as Error)?.message || 'An unexpected error occurred.', 'UNKNOWN');
+  }
+}
+
+// ─── Resource API Namespaces ─────────────────────────────────────────────────
+
+export const authApi = {
+  login: async (dto: LoginDto): Promise<LoginResponse> => {
+    const res = await apiFetch<LoginResponse>('/auth/login', {
+      method: 'POST',
+      body: dto,
+    });
+    if (res?.accessToken) {
+      setAccessToken(res.accessToken);
+    }
+    return res;
+  },
+  logout: async (): Promise<LogoutResponse> => {
+    try {
+      return await apiFetch<LogoutResponse>('/auth/logout', { method: 'POST' });
+    } finally {
+      clearAccessToken();
+    }
+  },
+  refresh: async (): Promise<RefreshResponse> => {
+    const res = await apiFetch<RefreshResponse>('/auth/refresh', { method: 'POST' });
+    if (res?.accessToken) {
+      setAccessToken(res.accessToken);
+    }
+    return res;
+  },
+};
+
 export const usersApi = {
-  me: () => apiFetch<AuthUser>('/users/me'),
-  list: (params?: Record<string, string>) => apiFetch<User[]>(`/users?${new URLSearchParams(params)}`),
-  create: (dto: CreateUserDto) => apiFetch<User>('/users', { method: 'POST', body: dto }),
-  updateStatus: (id: string, status: 'ACTIVE' | 'DEACTIVATED') =>
+  me: (): Promise<AuthUser> => apiFetch<AuthUser>('/users/me'),
+  list: (params?: UsersFilterParams): Promise<User[]> => {
+    const query = new URLSearchParams();
+    if (params?.role) query.set('role', params.role);
+    if (params?.facilityId) query.set('facilityId', params.facilityId);
+    if (params?.status) query.set('status', params.status);
+    if (params?.limit !== undefined) query.set('limit', String(params.limit));
+    if (params?.offset !== undefined) query.set('offset', String(params.offset));
+    const qs = query.toString();
+    return apiFetch<User[]>(`/users${qs ? `?${qs}` : ''}`);
+  },
+  create: (dto: CreateUserDto): Promise<User> =>
+    apiFetch<User>('/users', { method: 'POST', body: dto }),
+  updateStatus: (id: string, status: 'ACTIVE' | 'DEACTIVATED'): Promise<User> =>
     apiFetch<User>(`/users/${id}/status`, { method: 'PATCH', body: { status } }),
 };
 
-// ─── Facilities ───────────────────────────────────────────────────────────
 export const facilitiesApi = {
-  list: (params?: Record<string, string>) => apiFetch<Facility[]>(`/facilities?${new URLSearchParams(params)}`),
-  get: (id: string) => apiFetch<Facility>(`/facilities/${id}`),
-  register: (dto: RegisterFacilityDto) => apiFetch<Facility>('/facilities', { method: 'POST', body: dto }),
-  approve: (id: string, action: 'APPROVED' | 'SUSPENDED', reason?: string) =>
-    apiFetch<Facility>(`/facilities/${id}/approve`, { method: 'PATCH', body: { action, reason } }),
-  update: (id: string, dto: Partial<RegisterFacilityDto>) =>
+  list: (params?: FacilitiesFilterParams): Promise<Facility[]> => {
+    const query = new URLSearchParams();
+    if (params?.status) query.set('status', params.status);
+    if (params?.type) query.set('type', params.type);
+    if (params?.limit !== undefined) query.set('limit', String(params.limit));
+    if (params?.offset !== undefined) query.set('offset', String(params.offset));
+    const qs = query.toString();
+    return apiFetch<Facility[]>(`/facilities${qs ? `?${qs}` : ''}`);
+  },
+  get: (id: string): Promise<Facility> => apiFetch<Facility>(`/facilities/${id}`),
+  register: (dto: RegisterFacilityDto): Promise<Facility> =>
+    apiFetch<Facility>('/facilities', { method: 'POST', body: dto }),
+  approve: (id: string, dto: ApproveFacilityDto): Promise<Facility> =>
+    apiFetch<Facility>(`/facilities/${id}/approve`, { method: 'PATCH', body: dto }),
+  update: (id: string, dto: Partial<RegisterFacilityDto>): Promise<Facility> =>
     apiFetch<Facility>(`/facilities/${id}`, { method: 'PATCH', body: dto }),
 };
 
-// ─── Waste Categories ─────────────────────────────────────────────────────
 export const categoriesApi = {
-  list: () => apiFetch<WasteCategory[]>('/waste-categories'),
-  create: (dto: any) => apiFetch<WasteCategory>('/waste-categories', { method: 'POST', body: dto }),
-  update: (id: string, dto: any) => apiFetch<WasteCategory>(`/waste-categories/${id}`, { method: 'PATCH', body: dto }),
+  list: (): Promise<WasteCategory[]> => apiFetch<WasteCategory[]>('/waste-categories'),
+  create: (dto: Partial<WasteCategory>): Promise<WasteCategory> =>
+    apiFetch<WasteCategory>('/waste-categories', { method: 'POST', body: dto }),
+  update: (id: string, dto: Partial<WasteCategory>): Promise<WasteCategory> =>
+    apiFetch<WasteCategory>(`/waste-categories/${id}`, { method: 'PATCH', body: dto }),
 };
 
-// ─── Compliance Rules ─────────────────────────────────────────────────────
 export const complianceApi = {
-  list: () => apiFetch<ComplianceRule[]>('/compliance-rules'),
-  update: (id: string, maxDurationHours: number) =>
-    apiFetch<ComplianceRule>(`/compliance-rules/${id}`, { method: 'PUT', body: { maxDurationHours } }),
+  list: (): Promise<ComplianceRule[]> => apiFetch<ComplianceRule[]>('/compliance-rules'),
+  update: (id: string, maxDurationHours: number): Promise<ComplianceRule> =>
+    apiFetch<ComplianceRule>(`/compliance-rules/${id}`, {
+      method: 'PUT',
+      body: { maxDurationHours },
+    }),
 };
 
-// ─── Waste Batches ────────────────────────────────────────────────────────
 export const batchesApi = {
-  create: (dto: CreateBatchDto) => apiFetch<WasteBatch>('/waste-batches', { method: 'POST', body: dto }),
-  list: (params?: Record<string, string>) =>
-    apiFetch<PaginatedResult<WasteBatch>>(`/waste-batches?${new URLSearchParams(params)}`),
-  get: (id: string) => apiFetch<WasteBatch>(`/waste-batches/${id}`),
-  history: (id: string) => apiFetch<CustodyEvent[]>(`/waste-batches/${id}/history`),
-  generateQr: (id: string) => apiFetch<{ qrCode: QrCode; qrDataUrl: string }>(`/waste-batches/${id}/qr`, { method: 'POST' }),
-  scan: (codeValue: string) => apiFetch<ScanResult>('/scan', { method: 'POST', body: { codeValue } }),
-  custodyHandover: (id: string, dto: CustodyHandoverDto) =>
-    apiFetch<WasteBatch>(`/waste-batches/${id}/custody-events`, { method: 'POST', body: dto }),
-  verifyArrival: (id: string, dto: { latitude: number; longitude: number }) =>
-    apiFetch<WasteBatch>(`/waste-batches/${id}/verify-arrival`, { method: 'POST', body: dto }),
-  confirmTreatment: (id: string, dto: { photoUrl: string; latitude?: number; longitude?: number }) =>
-    apiFetch<WasteBatch>(`/waste-batches/${id}/confirm-treatment`, { method: 'POST', body: dto }),
+  create: (dto: CreateBatchDto): Promise<WasteBatch> =>
+    apiFetch<WasteBatch>('/waste-batches', { method: 'POST', body: dto }),
+  list: (params?: WasteBatchesFilterParams): Promise<PaginatedResult<WasteBatch>> => {
+    const query = new URLSearchParams();
+    if (params?.status) query.set('status', params.status);
+    if (params?.hospitalId) query.set('hospitalId', params.hospitalId);
+    if (params?.categoryId) query.set('categoryId', params.categoryId);
+    if (params?.limit !== undefined) query.set('limit', String(params.limit));
+    if (params?.offset !== undefined) query.set('offset', String(params.offset));
+    const qs = query.toString();
+    return apiFetch<PaginatedResult<WasteBatch>>(`/waste-batches${qs ? `?${qs}` : ''}`);
+  },
+  get: (id: string): Promise<WasteBatch> => apiFetch<WasteBatch>(`/waste-batches/${id}`),
+  history: (id: string): Promise<CustodyEvent[]> =>
+    apiFetch<CustodyEvent[]>(`/waste-batches/${id}/history`),
+  generateQr: (id: string): Promise<{ qrCode: QrCode; qrDataUrl: string }> =>
+    apiFetch<{ qrCode: QrCode; qrDataUrl: string }>(`/waste-batches/${id}/qr`, {
+      method: 'POST',
+    }),
+  scan: (codeValue: string): Promise<ScanResponse> =>
+    apiFetch<ScanResponse>('/scan', { method: 'POST', body: { codeValue } }),
+  custodyHandover: (id: string, dto: CustodyHandoverDto): Promise<WasteBatch> =>
+    apiFetch<WasteBatch>(`/waste-batches/${id}/custody-events`, {
+      method: 'POST',
+      body: dto,
+    }),
+  verifyArrival: (id: string, dto: VerifyArrivalDto): Promise<WasteBatch> =>
+    apiFetch<WasteBatch>(`/waste-batches/${id}/verify-arrival`, {
+      method: 'POST',
+      body: dto,
+    }),
+  confirmTreatment: (id: string, dto: ConfirmTreatmentDto): Promise<WasteBatch> =>
+    apiFetch<WasteBatch>(`/waste-batches/${id}/confirm-treatment`, {
+      method: 'POST',
+      body: dto,
+    }),
 };
 
-// ─── Alerts ───────────────────────────────────────────────────────────────
+export const transportApi = {
+  getActive: (): Promise<TransportAssignment[]> =>
+    apiFetch<TransportAssignment[]>('/transport/active'),
+  myAssignment: (): Promise<TransportAssignment | null> =>
+    apiFetch<TransportAssignment | null>('/transport/my-assignment'),
+  vehicles: (): Promise<Vehicle[]> => apiFetch<Vehicle[]>('/transport/vehicles'),
+  createAssignment: (dto: CreateTransportAssignmentDto): Promise<TransportAssignment> =>
+    apiFetch<TransportAssignment>('/transport/assignments', { method: 'POST', body: dto }),
+  ingestGps: (dto: CreateGpsPingDto): Promise<void> =>
+    apiFetch<void>('/gps-pings', { method: 'POST', body: dto }),
+  getPings: (assignmentId: string): Promise<GpsPing[]> =>
+    apiFetch<GpsPing[]>(`/gps-pings/${assignmentId}`),
+};
+
 export const alertsApi = {
-  list: (params?: Record<string, string>) =>
-    apiFetch<PaginatedResult<Alert>>(`/alerts?${new URLSearchParams(params)}`),
-  get: (id: string) => apiFetch<Alert>(`/alerts/${id}`),
-  update: (id: string, dto: { status?: string; notes?: string }) =>
+  list: (params?: AlertsFilterParams): Promise<PaginatedResult<Alert>> => {
+    const query = new URLSearchParams();
+    if (params?.status) query.set('status', params.status);
+    if (params?.type) query.set('type', params.type);
+    if (params?.severity) query.set('severity', params.severity);
+    if (params?.limit !== undefined) query.set('limit', String(params.limit));
+    if (params?.offset !== undefined) query.set('offset', String(params.offset));
+    const qs = query.toString();
+    return apiFetch<PaginatedResult<Alert>>(`/alerts${qs ? `?${qs}` : ''}`);
+  },
+  get: (id: string): Promise<Alert> => apiFetch<Alert>(`/alerts/${id}`),
+  update: (id: string, dto: UpdateAlertDto): Promise<Alert> =>
     apiFetch<Alert>(`/alerts/${id}`, { method: 'PATCH', body: dto }),
 };
 
-// ─── Dashboards ───────────────────────────────────────────────────────────
 export const dashboardApi = {
-  hospital: () => apiFetch<HospitalDashboard>('/dashboard/hospital'),
-  facility: () => apiFetch<FacilityDashboard>('/dashboard/facility'),
-  government: () => apiFetch<GovernmentDashboard>('/dashboard/government'),
+  hospital: (): Promise<HospitalDashboardData> =>
+    apiFetch<HospitalDashboardData>('/dashboard/hospital'),
+  facility: (): Promise<FacilityDashboardData> =>
+    apiFetch<FacilityDashboardData>('/dashboard/facility'),
+  government: (): Promise<GovernmentDashboardData> =>
+    apiFetch<GovernmentDashboardData>('/dashboard/government'),
 };
 
-// ─── Transport ────────────────────────────────────────────────────────────
-export const transportApi = {
-  getActive: () => apiFetch<TransportAssignment[]>('/transport/active'),
-  myAssignment: () => apiFetch<TransportAssignment | null>('/transport/my-assignment'),
-  vehicles: () => apiFetch<Vehicle[]>('/transport/vehicles'),
-  createAssignment: (dto: any) => apiFetch<TransportAssignment>('/transport/assignments', { method: 'POST', body: dto }),
-  ingestGps: (dto: { transportAssignmentId: string; latitude: number; longitude: number }) =>
-    apiFetch('/gps-pings', { method: 'POST', body: dto }),
-};
-
-// ─── Notifications ────────────────────────────────────────────────────────
 export const notificationsApi = {
-  list: () => apiFetch<Notification[]>('/notifications'),
-  unreadCount: () => apiFetch<number>('/notifications/unread-count'),
-  markRead: (id: string) => apiFetch(`/notifications/${id}/read`, { method: 'PATCH' }),
-  markAllRead: () => apiFetch('/notifications/mark-all-read', { method: 'PATCH' }),
+  list: (): Promise<Notification[]> => apiFetch<Notification[]>('/notifications'),
+  unreadCount: (): Promise<{ count: number }> =>
+    apiFetch<{ count: number }>('/notifications/unread-count'),
+  markRead: (id: string): Promise<void> =>
+    apiFetch<void>(`/notifications/${id}/read`, { method: 'PATCH' }),
+  markAllRead: (): Promise<void> =>
+    apiFetch<void>('/notifications/mark-all-read', { method: 'PATCH' }),
 };
 
-// ─── Types ────────────────────────────────────────────────────────────────
-export interface AuthUser {
-  id: string; name: string; email: string; role: string; facilityId: string | null;
-}
-export interface User extends AuthUser {
-  status: string; lastLoginAt: string | null; createdAt: string;
-}
-export interface CreateUserDto { name: string; email: string; password: string; role: string; facilityId?: string; }
-
-export interface Facility {
-  id: string; name: string; type: string; registrationNumber: string;
-  address: string; latitude?: number; longitude?: number;
-  geofenceRadiusM?: number; authorizedCategoryIds: string[];
-  status: string; createdAt: string;
-}
-export interface RegisterFacilityDto {
-  name: string; type: string; registrationNumber: string; address: string;
-  latitude?: number; longitude?: number; geofenceRadiusM?: number; authorizedCategoryIds?: string[];
-}
-
-export interface WasteCategory { id: string; code: string; name: string; description?: string; colorCode: string; isActive: boolean; }
-export interface ComplianceRule { id: string; wasteCategoryId: string; stage: string; maxDurationHours: number; wasteCategory: WasteCategory; }
-
-export interface WasteBatch {
-  id: string; wasteId: string; categoryId: string; hospitalId: string;
-  department: string; quantity: number; unit: string; status: string;
-  photoUrl?: string; generatedAt: string; createdAt: string; updatedAt: string;
-  category?: WasteCategory; hospital?: { id: string; name: string };
-  qrCode?: QrCode; alerts?: Alert[];
-}
-export interface CreateBatchDto { categoryId: string; department: string; quantity: number; unit: string; photoUrl?: string; idempotencyKey?: string; }
-export interface QrCode { id: string; codeValue: string; generatedAt: string; }
-
-export interface CustodyEvent {
-  id: string; wasteBatchId: string; eventType: string;
-  fromUser?: { id: string; name: string; role: string };
-  toUser?: { id: string; name: string; role: string };
-  latitude?: number; longitude?: number; occurredAt: string; notes?: string; photoUrl?: string;
-}
-export interface CustodyHandoverDto { eventType: string; latitude?: number; longitude?: number; notes?: string; photoUrl?: string; }
-
-export interface ScanResult { batch: WasteBatch; validActions: string[]; }
-
-export interface Alert {
-  id: string; wasteBatchId?: string; type: string; severity: string; status: string;
-  createdAt: string; resolvedAt?: string; notes?: string;
-  wasteBatch?: { wasteId: string; hospitalId: string };
-}
-
-export interface TransportAssignment {
-  id: string; wasteBatchId: string; vehicleId: string; driverUserId: string;
-  startTime: string; expectedFacilityId: string; endTime?: string; status: string;
-  wasteBatch?: WasteBatch; vehicle?: Vehicle;
-  driverUser?: { id: string; name: string };
-  expectedFacility?: { id: string; name: string; address: string; latitude?: number; longitude?: number; geofenceRadiusM?: number };
-  gpsPings?: GpsPing[];
-}
-export interface Vehicle { id: string; registrationNumber: string; type: string; capacity?: number; status: string; }
-export interface GpsPing { id: string; latitude: number; longitude: number; recordedAt: string; }
-
-export interface HospitalDashboard {
-  totalRegistered: number; pendingCollection: number; inTransit: number;
-  delayed: number; complianceRate: number; wasteByCategory: any[]; recentBatches: WasteBatch[];
-}
-export interface FacilityDashboard {
-  incoming: number; pendingVerification: number; received: number; treatedToday: number; pendingBatches: WasteBatch[];
-}
-export interface GovernmentDashboard {
-  totalFacilities: number; inTransit: number; openAlerts: number; overallCompliance: number;
-  facilities: Facility[]; recentAlerts: Alert[];
-}
-
-export interface PaginatedResult<T> { items: T[]; total: number; page: number; limit: number; }
-// eslint-disable-next-line @typescript-eslint/no-shadow
-export interface Notification { id: string; userId: string; type: string; message: string; readAt: string | null; createdAt: string; }
+export const auditLogApi = {
+  list: (params?: AuditLogFilterParams): Promise<PaginatedResult<AuditLog>> => {
+    const query = new URLSearchParams();
+    if (params?.entityType) query.set('entityType', params.entityType);
+    if (params?.entityId) query.set('entityId', params.entityId);
+    if (params?.actorUserId) query.set('actorUserId', params.actorUserId);
+    if (params?.limit !== undefined) query.set('limit', String(params.limit));
+    if (params?.offset !== undefined) query.set('offset', String(params.offset));
+    const qs = query.toString();
+    return apiFetch<PaginatedResult<AuditLog>>(`/audit-log${qs ? `?${qs}` : ''}`);
+  },
+};
