@@ -1,0 +1,86 @@
+
+# ─── VyomCare / BioTrack — Development Infrastructure ───────────────────────
+#
+# This file manages ONLY the infrastructure services (MySQL + Redis).
+# The NestJS backend and Next.js frontend run directly on the host machine.
+#
+# Architecture:
+#   Next.js  (host :3000)
+#   NestJS   (host :3001)
+#     ↓ DATABASE_URL   →  MySQL  (Docker :3306)
+#     ↓ REDIS_URL      →  Redis  (Docker :6379)
+#
+# NOTE: Docker is the DEVELOPMENT infrastructure choice.
+#       MySQL is the DATABASE TECHNOLOGY.
+#       In production, replace DATABASE_URL and REDIS_URL with
+#       managed/cloud service connection strings — no code changes required.
+# ──────────────────────────────────────────────────────────────────────────────
+
+services:
+  # ─── MySQL ─────────────────────────────────────────────────────────────────
+  mysql:
+    image: mysql:8.0
+    container_name: vyomcare_mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE: ${MYSQL_DATABASE}
+      MYSQL_USER: ${MYSQL_USER}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+    ports:
+      - "${MYSQL_PORT:-3306}:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "mysqladmin",
+          "ping",
+          "-h",
+          "localhost",
+          "-u",
+          "root",
+          "-p${MYSQL_ROOT_PASSWORD}",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    networks:
+      - vyomcare_net
+
+  # ─── Redis ─────────────────────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: vyomcare_redis
+    restart: unless-stopped
+    command: redis-server --save 60 1 --loglevel warning
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+    networks:
+      - vyomcare_net
+
+# ─── Volumes ────────────────────────────────────────────────────────────────
+# Data persists across container restarts.
+# To intentionally reset all development data:
+#   docker compose down -v
+# (WARNING: destroys all MySQL data and Redis data)
+volumes:
+  mysql_data:
+    driver: local
+  redis_data:
+    driver: local
+
+# ─── Network ─────────────────────────────────────────────────────────────────
+networks:
+  vyomcare_net:
+    driver: bridge

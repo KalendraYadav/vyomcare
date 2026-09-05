@@ -1,0 +1,356 @@
+// BioTrack — Prisma Schema
+// Source of truth: implementationplan.md §17
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  // MySQL is the required database technology for this project.
+  // Docker is the DEVELOPMENT hosting choice.
+  // In production, point DATABASE_URL at any MySQL-compatible service
+  // (managed cloud MySQL, self-hosted, etc.) — no code changes needed.
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+// ─── Enums ───────────────────────────────────────────────────────────────────
+
+enum FacilityType {
+  HOSPITAL
+  TREATMENT_FACILITY
+}
+
+enum FacilityStatus {
+  PENDING
+  APPROVED
+  SUSPENDED
+}
+
+enum UserRole {
+  HOSPITAL_ADMIN
+  HOSPITAL_STAFF
+  COLLECTION_STAFF
+  TRANSPORT_PERSONNEL
+  TREATMENT_FACILITY_STAFF
+  GOVERNMENT_AUTHORITY
+  SUPER_ADMIN
+}
+
+enum UserStatus {
+  ACTIVE
+  DEACTIVATED
+}
+
+enum WasteBatchStatus {
+  REGISTERED
+  QR_ASSIGNED
+  COLLECTED
+  IN_TRANSIT
+  RECEIVED
+  TREATED
+  VERIFIED_CLOSED
+  VIOLATION
+}
+
+enum WasteUnit {
+  KG
+  COUNT
+}
+
+enum CustodyEventType {
+  REGISTERED
+  QR_ASSIGNED
+  COLLECTION_ACCEPTED
+  TRANSPORT_STARTED
+  TRANSPORT_UPDATED
+  ARRIVAL_VERIFIED
+  TREATMENT_CONFIRMED
+  VERIFIED_CLOSED
+}
+
+enum ComplianceStage {
+  COLLECTION
+  TRANSPORT
+  TREATMENT
+}
+
+enum AlertType {
+  DISPOSAL_DELAY
+  UNAUTHORIZED_LOCATION
+  ROUTE_DEVIATION
+  MISSING_SCAN
+}
+
+enum AlertSeverity {
+  LOW
+  MEDIUM
+  HIGH
+}
+
+enum AlertStatus {
+  OPEN
+  INVESTIGATING
+  RESOLVED
+}
+
+enum TransportAssignmentStatus {
+  IN_PROGRESS
+  ARRIVED
+  ABANDONED
+}
+
+enum VehicleStatus {
+  ACTIVE
+  INACTIVE
+}
+
+// ─── Models ──────────────────────────────────────────────────────────────────
+
+model Facility {
+  id                    String         @id @default(uuid())
+  name                  String
+  type                  FacilityType
+  registrationNumber    String         @unique @map("registration_number")
+  address               String
+  latitude              Float?
+  longitude             Float?
+  geofenceRadiusM       Int?           @map("geofence_radius_m")
+  // MYSQL COMPATIBILITY: MySQL does not support native array columns.
+  // authorizedCategoryIds is stored as a JSON array (e.g. ["uuid1", "uuid2"]).
+  // Prisma maps this as Json; the application reads it as string[].
+  authorizedCategoryIds Json           @default("[]") @map("authorized_category_ids")
+  status                FacilityStatus @default(PENDING)
+  createdAt             DateTime       @default(now()) @map("created_at")
+  updatedAt             DateTime       @updatedAt @map("updated_at")
+
+  users              User[]
+  wasteBatches       WasteBatch[]        @relation("HospitalBatches")
+  transportTargets   TransportAssignment[] @relation("DestinationFacility")
+
+  @@map("facility")
+}
+
+model User {
+  id             String     @id @default(uuid())
+  facilityId     String?    @map("facility_id")
+  name           String
+  email          String     @unique
+  phone          String?
+  passwordHash   String     @map("password_hash")
+  role           UserRole
+  status         UserStatus @default(ACTIVE)
+  createdAt      DateTime   @default(now()) @map("created_at")
+  updatedAt      DateTime   @updatedAt @map("updated_at")
+  lastLoginAt    DateTime?  @map("last_login_at")
+
+  facility               Facility?             @relation(fields: [facilityId], references: [id], onDelete: Restrict)
+  registeredBatches      WasteBatch[]          @relation("GeneratedByUser")
+  custodyFromEvents      CustodyEvent[]        @relation("FromUser")
+  custodyToEvents        CustodyEvent[]        @relation("ToUser")
+  driverAssignments      TransportAssignment[] @relation("DriverUser")
+  resolvedAlerts         Alert[]               @relation("ResolvedByUser")
+  notifications          Notification[]
+  refreshTokens          RefreshToken[]
+  generatedQRCodes       QrCode[]
+
+  @@map("user")
+}
+
+model RefreshToken {
+  id        String   @id @default(uuid())
+  userId    String   @map("user_id")
+  tokenHash String   @unique @map("token_hash")
+  expiresAt DateTime @map("expires_at")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("refresh_token")
+}
+
+model WasteCategory {
+  id          String   @id @default(uuid())
+  code        String   @unique
+  name        String
+  description String?
+  colorCode   String   @map("color_code")
+  isActive    Boolean  @default(true) @map("is_active")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  wasteBatches     WasteBatch[]
+  complianceRules  ComplianceRule[]
+
+  @@map("waste_category")
+}
+
+model ComplianceRule {
+  id               String          @id @default(uuid())
+  wasteCategoryId  String          @map("waste_category_id")
+  stage            ComplianceStage
+  maxDurationHours Int             @map("max_duration_hours")
+  createdAt        DateTime        @default(now()) @map("created_at")
+  updatedAt        DateTime        @updatedAt @map("updated_at")
+
+  wasteCategory WasteCategory @relation(fields: [wasteCategoryId], references: [id], onDelete: Restrict)
+
+  @@unique([wasteCategoryId, stage])
+  @@map("compliance_rule")
+}
+
+model WasteBatch {
+  id                     String           @id @default(uuid())
+  wasteId                String           @unique @map("waste_id")
+  categoryId             String           @map("category_id")
+  hospitalId             String           @map("hospital_id")
+  department             String
+  quantity               Decimal
+  unit                   WasteUnit
+  generatedByUserId      String           @map("generated_by_user_id")
+  generatedAt            DateTime         @default(now()) @map("generated_at")
+  status                 WasteBatchStatus @default(REGISTERED)
+  photoUrl               String?          @map("photo_url")
+  currentCustodianUserId String?          @map("current_custodian_user_id")
+  currentLatitude        Float?           @map("current_latitude")
+  currentLongitude       Float?           @map("current_longitude")
+  idempotencyKey         String?          @unique @map("idempotency_key")
+  createdAt              DateTime         @default(now()) @map("created_at")
+  updatedAt              DateTime         @updatedAt @map("updated_at")
+
+  category            WasteCategory         @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  hospital            Facility              @relation("HospitalBatches", fields: [hospitalId], references: [id], onDelete: Restrict)
+  generatedByUser     User                  @relation("GeneratedByUser", fields: [generatedByUserId], references: [id], onDelete: Restrict)
+  qrCode              QrCode?
+  custodyEvents       CustodyEvent[]
+  transportAssignment TransportAssignment[]
+  alerts              Alert[]
+
+  @@index([status])
+  @@index([hospitalId, status])
+  @@map("waste_batch")
+}
+
+model QrCode {
+  id                String   @id @default(uuid())
+  wasteBatchId      String   @unique @map("waste_batch_id")
+  codeValue         String   @unique @map("code_value")
+  generatedAt       DateTime @default(now()) @map("generated_at")
+  generatedByUserId String   @map("generated_by_user_id")
+
+  wasteBatch      WasteBatch @relation(fields: [wasteBatchId], references: [id], onDelete: Restrict)
+  generatedByUser User       @relation(fields: [generatedByUserId], references: [id], onDelete: Restrict)
+
+  @@map("qr_code")
+}
+
+model CustodyEvent {
+  id           String           @id @default(uuid())
+  wasteBatchId String           @map("waste_batch_id")
+  eventType    CustodyEventType @map("event_type")
+  fromUserId   String?          @map("from_user_id")
+  toUserId     String?          @map("to_user_id")
+  latitude     Float?
+  longitude    Float?
+  occurredAt   DateTime         @default(now()) @map("occurred_at")
+  notes        String?
+  photoUrl     String?          @map("photo_url")
+
+  wasteBatch WasteBatch @relation(fields: [wasteBatchId], references: [id], onDelete: Restrict)
+  fromUser   User?      @relation("FromUser", fields: [fromUserId], references: [id], onDelete: Restrict)
+  toUser     User?      @relation("ToUser", fields: [toUserId], references: [id], onDelete: Restrict)
+
+  @@index([wasteBatchId, occurredAt])
+  @@map("custody_event")
+}
+
+model Vehicle {
+  id                 String        @id @default(uuid())
+  registrationNumber String        @unique @map("registration_number")
+  type               String
+  capacity           Float?
+  status             VehicleStatus @default(ACTIVE)
+
+  assignments TransportAssignment[]
+
+  @@map("vehicle")
+}
+
+model TransportAssignment {
+  id                 String                    @id @default(uuid())
+  wasteBatchId       String                    @map("waste_batch_id")
+  vehicleId          String                    @map("vehicle_id")
+  driverUserId       String                    @map("driver_user_id")
+  startTime          DateTime                  @default(now()) @map("start_time")
+  expectedFacilityId String                    @map("expected_facility_id")
+  endTime            DateTime?                 @map("end_time")
+  status             TransportAssignmentStatus @default(IN_PROGRESS)
+
+  wasteBatch       WasteBatch @relation(fields: [wasteBatchId], references: [id], onDelete: Restrict)
+  vehicle          Vehicle    @relation(fields: [vehicleId], references: [id], onDelete: Restrict)
+  driverUser       User       @relation("DriverUser", fields: [driverUserId], references: [id], onDelete: Restrict)
+  expectedFacility Facility   @relation("DestinationFacility", fields: [expectedFacilityId], references: [id], onDelete: Restrict)
+  gpsPings         GpsPing[]
+
+  @@map("transport_assignment")
+}
+
+model GpsPing {
+  id                    String   @id @default(uuid())
+  transportAssignmentId String   @map("transport_assignment_id")
+  latitude              Float
+  longitude             Float
+  recordedAt            DateTime @default(now()) @map("recorded_at")
+
+  transportAssignment TransportAssignment @relation(fields: [transportAssignmentId], references: [id], onDelete: Cascade)
+
+  @@index([transportAssignmentId, recordedAt])
+  @@map("gps_ping")
+}
+
+model Alert {
+  id               String        @id @default(uuid())
+  wasteBatchId     String?       @map("waste_batch_id")
+  type             AlertType
+  severity         AlertSeverity
+  status           AlertStatus   @default(OPEN)
+  createdAt        DateTime      @default(now()) @map("created_at")
+  resolvedAt       DateTime?     @map("resolved_at")
+  resolvedByUserId String?       @map("resolved_by_user_id")
+  notes            String?
+
+  wasteBatch      WasteBatch? @relation(fields: [wasteBatchId], references: [id], onDelete: SetNull)
+  resolvedByUser  User?       @relation("ResolvedByUser", fields: [resolvedByUserId], references: [id], onDelete: SetNull)
+
+  @@index([status, type])
+  @@map("alert")
+}
+
+model AuditLog {
+  id          String   @id @default(uuid())
+  actorUserId String?  @map("actor_user_id")
+  action      String
+  entityType  String   @map("entity_type")
+  entityId    String   @map("entity_id")
+  metadata    Json?
+  ipAddress   String?  @map("ip_address")
+  occurredAt  DateTime @default(now()) @map("occurred_at")
+
+  @@index([entityType, entityId])
+  @@index([occurredAt])
+  @@map("audit_log")
+}
+
+
+model Notification {
+  id        String    @id @default(uuid())
+  userId    String    @map("user_id")
+  type      String
+  message   String
+  readAt    DateTime? @map("read_at")
+  createdAt DateTime  @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, readAt])
+  @@map("notification")
+}
