@@ -14,6 +14,7 @@ import { Roles } from '../../common/decorators/roles.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { UserRole } from '@prisma/client';
 import { UsersService } from './users.service';
+import { CreateUserDto } from './dto/create-user.dto';
 
 @Controller('users')
 @UseGuards(AuthGuard('jwt'), RolesGuard)
@@ -22,7 +23,7 @@ export class UsersController {
 
   @Post()
   @Roles(UserRole.SUPER_ADMIN, UserRole.HOSPITAL_ADMIN)
-  create(@Body() dto: any, @CurrentUser() user: any) {
+  create(@Body() dto: CreateUserDto, @CurrentUser() user: any) {
     return this.svc.create(dto, user);
   }
 
@@ -42,7 +43,8 @@ export class UsersController {
   updateStatus(
     @Param('id') id: string,
     @Body('status') status: 'ACTIVE' | 'DEACTIVATED',
+    @CurrentUser() user: any,
   ) {
-    return this.svc.updateStatus(id, status);
+    return this.svc.updateStatus(id, status, user);
   }
 }

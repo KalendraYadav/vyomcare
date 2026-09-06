@@ -14,14 +14,16 @@ import { AuthGuard } from '@nestjs/passport';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { UserRole } from '@prisma/client';
+import { Throttle } from '@nestjs/throttler';
 import { FacilitiesService } from './facilities.service';
 
 @Controller('facilities')
 export class FacilitiesController {
   constructor(private readonly svc: FacilitiesService) {}
 
-  // Public registration endpoint
+  // Public registration endpoint with dedicated rate limit (P3-03)
   @Post()
+  @Throttle({ default: { limit: 5, ttl: 60000 } })
   @HttpCode(HttpStatus.CREATED)
   register(@Body() dto: any) {
     return this.svc.register(dto);

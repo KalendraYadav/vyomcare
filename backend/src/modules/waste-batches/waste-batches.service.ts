@@ -159,22 +159,81 @@ export class WasteBatchesService {
   }
 
   async scan(
-    codeValue: string,
+    rawCodeValue: string,
     user: { userId: string; role: string; facilityId: string | null },
   ) {
-    const qr = await this.prisma.qrCode.findUnique({
-      where: { codeValue },
-      include: { wasteBatch: { include: { category: true, hospital: true } } },
-    });
-    if (!qr) throw new NotFoundException('QR code not recognized');
+    if (!rawCodeValue || typeof rawCodeValue !== 'string') {
+      throw new NotFoundException('Invalid QR code value');
+    }
 
-    const batch = qr.wasteBatch;
+    const trimmed = rawCodeValue.trim();
+
+    // 1. Exact match on qr_code.code_value
+    let qr = await this.prisma.qrCode.findUnique({
+      where: { codeValue: trimmed },
+      include: {
+        wasteBatch: {
+          include: { category: true, hospital: true, qrCode: true },
+        },
+      },
+    });
+
+    let batch: any = qr?.wasteBatch || null;
+
+    // 2. URL pointing to /waste-batches/:id
+    if (!batch) {
+      const urlMatch = trimmed.match(/\/waste-batches\/([a-f0-9-]{36})/i);
+      if (urlMatch) {
+        const batchId = urlMatch[1];
+        batch = await this.prisma.wasteBatch.findUnique({
+          where: { id: batchId },
+          include: { category: true, hospital: true, qrCode: true },
+        });
+      }
+    }
+
+    // 3. Pattern BIOTRACK:<wasteId>:<token>
+    if (!batch && trimmed.toUpperCase().startsWith('BIOTRACK:')) {
+      const parts = trimmed.split(':');
+      if (parts.length >= 2) {
+        const extractedWasteId = parts[1];
+        batch = await this.prisma.wasteBatch.findUnique({
+          where: { wasteId: extractedWasteId },
+          include: { category: true, hospital: true, qrCode: true },
+        });
+      }
+    }
+
+    // 4. Direct wasteId (e.g. BMW-2026-000006)
+    if (!batch) {
+      batch = await this.prisma.wasteBatch.findUnique({
+        where: { wasteId: trimmed },
+        include: { category: true, hospital: true, qrCode: true },
+      });
+    }
+
+    // 5. Direct UUID
+    if (!batch && /^[a-f0-9-]{36}$/i.test(trimmed)) {
+      batch = await this.prisma.wasteBatch.findUnique({
+        where: { id: trimmed },
+        include: { category: true, hospital: true, qrCode: true },
+      });
+    }
+
+    if (!batch) {
+      throw new NotFoundException('QR code not recognized');
+    }
+
     const validActions = this.getValidActions(
       batch.status,
       user.role as UserRole,
     );
 
-    return { batch, validActions };
+    return {
+      batch,
+      qrCode: batch.qrCode || qr || null,
+      validActions,
+    };
   }
 
   async custodyHandover(
@@ -188,6 +247,26 @@ export class WasteBatchesService {
     },
     user: { userId: string; role: string },
   ) {
+    if (dto.eventType === CustodyEventType.COLLECTION_ACCEPTED) {
+      if (
+        user.role !== UserRole.COLLECTION_STAFF &&
+        user.role !== UserRole.SUPER_ADMIN
+      ) {
+        throw new ForbiddenException(
+          'Only collection staff or super admin can accept waste into collection',
+        );
+      }
+    } else if (dto.eventType === CustodyEventType.TRANSPORT_STARTED) {
+      if (
+        user.role !== UserRole.TRANSPORT_PERSONNEL &&
+        user.role !== UserRole.SUPER_ADMIN
+      ) {
+        throw new ForbiddenException(
+          'Only transport personnel or super admin can start a transport run',
+        );
+      }
+    }
+
     const batch = await this.prisma.wasteBatch.findUnique({
       where: { id: batchId },
     });
@@ -364,7 +443,13 @@ export class WasteBatchesService {
     });
   }
 
-  async getHistory(batchId: string) {
+  async getHistory(
+    batchId: string,
+    user?: { role: string; facilityId: string | null },
+  ) {
+    // Enforce tenant scoping check via findById
+    await this.findById(batchId, user);
+
     return this.prisma.custodyEvent.findMany({
       where: { wasteBatchId: batchId },
       orderBy: { occurredAt: 'asc' },
@@ -375,7 +460,10 @@ export class WasteBatchesService {
     });
   }
 
-  async findById(id: string) {
+  async findById(
+    id: string,
+    user?: { role: string; facilityId: string | null },
+  ) {
     const batch = await this.prisma.wasteBatch.findUnique({
       where: { id },
       include: {
@@ -386,6 +474,21 @@ export class WasteBatchesService {
       },
     });
     if (!batch) throw new NotFoundException('Batch not found');
+
+    // Hospital roles are restricted to batches originating from their facility (P2-03)
+    if (
+      user &&
+      (
+        [UserRole.HOSPITAL_ADMIN, UserRole.HOSPITAL_STAFF] as UserRole[]
+      ).includes(user.role as UserRole)
+    ) {
+      if (batch.hospitalId !== user.facilityId) {
+        throw new ForbiddenException(
+          'You are not authorized to view waste batches from another facility',
+        );
+      }
+    }
+
     return batch;
   }
 
@@ -445,13 +548,35 @@ export class WasteBatchesService {
     current: WasteBatchStatus,
     event: CustodyEventType,
   ): WasteBatchStatus | null {
-    const transitions: Partial<Record<CustodyEventType, WasteBatchStatus>> = {
-      [CustodyEventType.COLLECTION_ACCEPTED]: WasteBatchStatus.COLLECTED,
-      [CustodyEventType.TRANSPORT_STARTED]: WasteBatchStatus.IN_TRANSIT,
-      [CustodyEventType.ARRIVAL_VERIFIED]: WasteBatchStatus.RECEIVED,
-      [CustodyEventType.TREATMENT_CONFIRMED]: WasteBatchStatus.TREATED,
-      [CustodyEventType.VERIFIED_CLOSED]: WasteBatchStatus.VERIFIED_CLOSED,
+    const validTransitions: Partial<
+      Record<CustodyEventType, { from: WasteBatchStatus; to: WasteBatchStatus }>
+    > = {
+      [CustodyEventType.COLLECTION_ACCEPTED]: {
+        from: WasteBatchStatus.QR_ASSIGNED,
+        to: WasteBatchStatus.COLLECTED,
+      },
+      [CustodyEventType.TRANSPORT_STARTED]: {
+        from: WasteBatchStatus.COLLECTED,
+        to: WasteBatchStatus.IN_TRANSIT,
+      },
+      [CustodyEventType.ARRIVAL_VERIFIED]: {
+        from: WasteBatchStatus.IN_TRANSIT,
+        to: WasteBatchStatus.RECEIVED,
+      },
+      [CustodyEventType.TREATMENT_CONFIRMED]: {
+        from: WasteBatchStatus.RECEIVED,
+        to: WasteBatchStatus.TREATED,
+      },
+      [CustodyEventType.VERIFIED_CLOSED]: {
+        from: WasteBatchStatus.TREATED,
+        to: WasteBatchStatus.VERIFIED_CLOSED,
+      },
     };
-    return transitions[event] || null;
+
+    const rule = validTransitions[event];
+    if (!rule || rule.from !== current) {
+      return null;
+    }
+    return rule.to;
   }
 }

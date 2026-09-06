@@ -2,10 +2,13 @@ import {
   Injectable,
   UnauthorizedException,
   ForbiddenException,
+  Logger,
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { PrismaService } from '../../common/prisma/prisma.service';
+import { RedisService } from '../../common/redis/redis.service';
 import * as bcrypt from 'bcryptjs';
+import * as crypto from 'crypto';
 import { v4 as uuidv4 } from 'uuid';
 import { LoginDto } from './dto/login.dto';
 import { Response } from 'express';
@@ -13,28 +16,39 @@ import { Response } from 'express';
 const FAILED_LOGIN_LIMIT = 5;
 const LOCKOUT_MINUTES = 15;
 
-// Simple in-memory rate limiter (production: use Redis)
-const failedAttempts = new Map<string, { count: number; since: Date }>();
+/**
+ * Deterministically hash a refresh token using SHA-256.
+ * Storing only the SHA-256 digest in the database prevents plaintext leakage
+ * while allowing an O(1) indexed lookup on the unique `token_hash` column.
+ */
+function hashRefreshToken(token: string): string {
+  return crypto.createHash('sha256').update(token).digest('hex');
+}
 
 @Injectable()
 export class AuthService {
+  private readonly logger = new Logger(AuthService.name);
+
   constructor(
     private prisma: PrismaService,
     private jwtService: JwtService,
+    private redis: RedisService,
   ) {}
 
   async login(dto: LoginDto, res: Response) {
+    const normalizedEmail = dto.email.trim().toLowerCase();
+
+    // Check Redis-backed lockout before checking credentials
+    await this.checkLockout(normalizedEmail);
+
     const user = await this.prisma.user.findUnique({
-      where: { email: dto.email },
+      where: { email: normalizedEmail },
     });
 
     if (!user) {
-      this.recordFailedAttempt(dto.email);
+      await this.recordFailedAttempt(normalizedEmail);
       throw new UnauthorizedException('Incorrect email or password');
     }
-
-    // Check lockout
-    this.checkLockout(dto.email);
 
     if (user.status === 'DEACTIVATED') {
       throw new ForbiddenException(
@@ -44,14 +58,14 @@ export class AuthService {
 
     const passwordValid = await bcrypt.compare(dto.password, user.passwordHash);
     if (!passwordValid) {
-      this.recordFailedAttempt(dto.email);
+      await this.recordFailedAttempt(normalizedEmail);
       throw new UnauthorizedException('Incorrect email or password');
     }
 
-    // Clear failed attempts on success
-    failedAttempts.delete(dto.email);
+    // Clear failed attempts counter upon successful authentication
+    await this.clearFailedAttempts(normalizedEmail);
 
-    // Update last login
+    // Update last login timestamp
     await this.prisma.user.update({
       where: { id: user.id },
       data: { lastLoginAt: new Date() },
@@ -63,15 +77,17 @@ export class AuthService {
       facilityId: user.facilityId,
     };
     const accessToken = this.jwtService.sign(payload, { expiresIn: '15m' });
-    const refreshToken = uuidv4();
-    const refreshTokenHash = await bcrypt.hash(refreshToken, 10);
+
+    // Generate high-entropy refresh token & store deterministic SHA-256 hash (P1-01)
+    const refreshToken = `${uuidv4()}-${crypto.randomBytes(16).toString('hex')}`;
+    const tokenHash = hashRefreshToken(refreshToken);
     const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
 
     await this.prisma.refreshToken.create({
-      data: { userId: user.id, tokenHash: refreshTokenHash, expiresAt },
+      data: { userId: user.id, tokenHash, expiresAt },
     });
 
-    // Set httpOnly refresh cookie
+    // Set secure httpOnly cookie
     res.cookie('refresh_token', refreshToken, {
       httpOnly: true,
       secure: process.env.NODE_ENV === 'production',
@@ -95,35 +111,40 @@ export class AuthService {
   async refresh(refreshToken: string, res: Response) {
     if (!refreshToken) throw new UnauthorizedException('Missing refresh token');
 
-    const tokens = await this.prisma.refreshToken.findMany({
-      where: { expiresAt: { gt: new Date() } },
+    // O(1) indexed unique lookup using deterministic SHA-256 hash (P1-01)
+    const tokenHash = hashRefreshToken(refreshToken);
+    const matched = await this.prisma.refreshToken.findUnique({
+      where: { tokenHash },
       include: { user: true },
     });
 
-    let matched: (typeof tokens)[number] | null = null;
-    for (const t of tokens) {
-      const valid = await bcrypt.compare(refreshToken, t.tokenHash);
-      if (valid) {
-        matched = t;
-        break;
+    if (!matched || matched.expiresAt < new Date()) {
+      if (matched) {
+        await this.prisma.refreshToken
+          .delete({ where: { id: matched.id } })
+          .catch(() => {});
       }
+      throw new UnauthorizedException('Invalid or expired refresh token');
     }
 
-    if (!matched)
-      throw new UnauthorizedException('Invalid or expired refresh token');
-
-    // Rotate: delete old, issue new
+    // Rotate: Delete old token record immediately
     await this.prisma.refreshToken.delete({ where: { id: matched.id } });
 
     const user = matched.user;
+    if (user.status === 'DEACTIVATED') {
+      throw new ForbiddenException('This account has been deactivated');
+    }
+
     const payload = {
       sub: user.id,
       role: user.role,
       facilityId: user.facilityId,
     };
     const accessToken = this.jwtService.sign(payload, { expiresIn: '15m' });
-    const newRefreshToken = uuidv4();
-    const newHash = await bcrypt.hash(newRefreshToken, 10);
+
+    // Issue rotated new refresh token
+    const newRefreshToken = `${uuidv4()}-${crypto.randomBytes(16).toString('hex')}`;
+    const newHash = hashRefreshToken(newRefreshToken);
     const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
 
     await this.prisma.refreshToken.create({
@@ -147,47 +168,48 @@ export class AuthService {
     res: Response,
   ) {
     if (refreshToken) {
-      const tokens = await this.prisma.refreshToken.findMany({
-        where: { userId, expiresAt: { gt: new Date() } },
-      });
-      for (const t of tokens) {
-        const valid = await bcrypt.compare(refreshToken, t.tokenHash);
-        if (valid) {
-          await this.prisma.refreshToken.delete({ where: { id: t.id } });
-          break;
-        }
-      }
+      const tokenHash = hashRefreshToken(refreshToken);
+      await this.prisma.refreshToken
+        .deleteMany({
+          where: {
+            tokenHash,
+            userId,
+          },
+        })
+        .catch(() => {});
     }
     res.clearCookie('refresh_token', { path: '/api/auth/refresh' });
     return { message: 'Logged out' };
   }
 
-  private recordFailedAttempt(email: string) {
-    const now = new Date();
-    const existing = failedAttempts.get(email);
-    if (
-      !existing ||
-      now.getTime() - existing.since.getTime() > LOCKOUT_MINUTES * 60 * 1000
-    ) {
-      failedAttempts.set(email, { count: 1, since: now });
-    } else {
-      existing.count++;
+  // ─── Redis-Backed Login Lockout (P2-01) ────────────────────────────────────
+
+  private getLockoutKey(email: string): string {
+    return `auth:lockout:${email}`;
+  }
+
+  private async checkLockout(email: string): Promise<void> {
+    const key = this.getLockoutKey(email);
+    const attempts = await this.redis.get(key);
+    if (attempts && parseInt(attempts, 10) >= FAILED_LOGIN_LIMIT) {
+      const ttl = await this.redis.ttl(key);
+      const remainingMinutes = Math.max(1, Math.ceil(ttl / 60));
+      throw new ForbiddenException(
+        `Too many failed attempts. Try again in ${remainingMinutes} minutes.`,
+      );
     }
   }
 
-  private checkLockout(email: string) {
-    const existing = failedAttempts.get(email);
-    if (!existing) return;
-    const elapsed = (Date.now() - existing.since.getTime()) / 1000 / 60;
-    if (elapsed > LOCKOUT_MINUTES) {
-      failedAttempts.delete(email);
-      return;
+  private async recordFailedAttempt(email: string): Promise<void> {
+    const key = this.getLockoutKey(email);
+    const count = await this.redis.incr(key);
+    if (count === 1) {
+      await this.redis.expire(key, LOCKOUT_MINUTES * 60);
     }
-    if (existing.count >= FAILED_LOGIN_LIMIT) {
-      const remaining = Math.ceil(LOCKOUT_MINUTES - elapsed);
-      throw new ForbiddenException(
-        `Too many failed attempts. Try again in ${remaining} minutes.`,
-      );
-    }
+  }
+
+  private async clearFailedAttempts(email: string): Promise<void> {
+    const key = this.getLockoutKey(email);
+    await this.redis.del(key);
   }
 }

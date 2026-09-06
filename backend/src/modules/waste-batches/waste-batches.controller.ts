@@ -45,6 +45,9 @@ export class WasteBatchesController {
     UserRole.COLLECTION_STAFF,
     UserRole.TRANSPORT_PERSONNEL,
     UserRole.TREATMENT_FACILITY_STAFF,
+    UserRole.HOSPITAL_ADMIN,
+    UserRole.HOSPITAL_STAFF,
+    UserRole.GOVERNMENT_AUTHORITY,
     UserRole.SUPER_ADMIN,
   )
   @HttpCode(HttpStatus.OK)
@@ -87,13 +90,13 @@ export class WasteBatchesController {
   }
 
   @Get('waste-batches/:id/history')
-  getHistory(@Param('id') id: string) {
-    return this.svc.getHistory(id);
+  getHistory(@Param('id') id: string, @CurrentUser() user: any) {
+    return this.svc.getHistory(id, user);
   }
 
   @Get('waste-batches/:id')
-  findOne(@Param('id') id: string) {
-    return this.svc.findById(id);
+  findOne(@Param('id') id: string, @CurrentUser() user: any) {
+    return this.svc.findById(id, user);
   }
 
   @Get('waste-batches')
