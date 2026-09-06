@@ -132,17 +132,24 @@ model Facility {
 }
 
 model User {
-  id             String     @id @default(uuid())
-  facilityId     String?    @map("facility_id")
-  name           String
-  email          String     @unique
-  phone          String?
-  passwordHash   String     @map("password_hash")
-  role           UserRole
-  status         UserStatus @default(ACTIVE)
-  createdAt      DateTime   @default(now()) @map("created_at")
-  updatedAt      DateTime   @updatedAt @map("updated_at")
-  lastLoginAt    DateTime?  @map("last_login_at")
+  id                         String     @id @default(uuid())
+  facilityId                 String?    @map("facility_id")
+  name                       String
+  email                      String     @unique
+  phone                      String?
+  passwordHash               String     @map("password_hash")
+  role                       UserRole
+  status                     UserStatus @default(ACTIVE)
+  emailVerified              Boolean    @default(false) @map("email_verified")
+  emailVerifiedAt            DateTime?  @map("email_verified_at")
+  emailVerificationTokenHash String?    @unique @map("email_verification_token_hash")
+  emailVerificationExpiresAt DateTime?  @map("email_verification_expires_at")
+  passwordResetTokenHash     String?    @unique @map("password_reset_token_hash")
+  passwordResetExpiresAt     DateTime?  @map("password_reset_expires_at")
+  mustChangePassword         Boolean    @default(false) @map("must_change_password")
+  createdAt                  DateTime   @default(now()) @map("created_at")
+  updatedAt                  DateTime   @updatedAt @map("updated_at")
+  lastLoginAt                DateTime?  @map("last_login_at")
 
   facility               Facility?             @relation(fields: [facilityId], references: [id], onDelete: Restrict)
   registeredBatches      WasteBatch[]          @relation("GeneratedByUser")

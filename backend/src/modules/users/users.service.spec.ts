@@ -8,9 +8,12 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 
+import { EmailService } from '../../common/email/email.service';
+
 describe('UsersService (Production Hardened)', () => {
   let service: UsersService;
   let prisma: any;
+  let emailService: any;
 
   const hospitalAdminActor = {
     userId: 'admin-1',
@@ -32,10 +35,28 @@ describe('UsersService (Production Hardened)', () => {
         findMany: jest.fn(),
         update: jest.fn(),
       },
+      facility: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: 'facility-hospital-A',
+          type: 'HOSPITAL',
+          status: 'APPROVED',
+        }),
+      },
+    };
+
+    emailService = {
+      sendVerificationEmail: jest.fn().mockResolvedValue({
+        messageId: 'mock-msg-id',
+        verificationUrl: 'http://localhost/verify-email?token=mock',
+      }),
     };
 
     const module: TestingModule = await Test.createTestingModule({
-      providers: [UsersService, { provide: PrismaService, useValue: prisma }],
+      providers: [
+        UsersService,
+        { provide: PrismaService, useValue: prisma },
+        { provide: EmailService, useValue: emailService },
+      ],
     }).compile();
 
     service = module.get<UsersService>(UsersService);

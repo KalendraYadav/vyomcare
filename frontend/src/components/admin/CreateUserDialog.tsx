@@ -14,24 +14,35 @@ import { Select } from '@/components/ui/select';
 import { UserRole } from '@/types/models';
 import { UserPlus, AlertCircle } from 'lucide-react';
 
-const createUserSchema = z.object({
-  name: z.string().min(2, 'Name must be at least 2 characters'),
-  email: z.string().email('Please enter a valid email address'),
-  phone: z.string().optional(),
-  role: z.enum([
-    'HOSPITAL_ADMIN',
-    'HOSPITAL_STAFF',
-    'COLLECTION_STAFF',
-    'TRANSPORT_PERSONNEL',
-    'TREATMENT_FACILITY_STAFF',
-    'GOVERNMENT_AUTHORITY',
-    'SUPER_ADMIN',
-  ] as const),
-  facilityId: z.string().optional(),
-  password: z
-    .string()
-    .min(8, 'Password must be at least 8 characters long'),
-});
+const createUserSchema = z
+  .object({
+    name: z.string().min(2, 'Name must be at least 2 characters'),
+    email: z.string().email('Please enter a valid email address'),
+    phone: z.string().optional(),
+    role: z.enum([
+      'HOSPITAL_ADMIN',
+      'HOSPITAL_STAFF',
+      'COLLECTION_STAFF',
+      'TRANSPORT_PERSONNEL',
+      'TREATMENT_FACILITY_STAFF',
+      'GOVERNMENT_AUTHORITY',
+      'SUPER_ADMIN',
+    ] as const),
+    facilityId: z.string().optional(),
+    password: z
+      .string()
+      .min(8, 'Password must be at least 8 characters long'),
+  })
+  .superRefine((data, ctx) => {
+    const facilityRoles = ['HOSPITAL_ADMIN', 'HOSPITAL_STAFF', 'TREATMENT_FACILITY_STAFF'];
+    if (facilityRoles.includes(data.role) && (!data.facilityId || data.facilityId.trim() === '')) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['facilityId'],
+        message: 'Please select an affiliated facility for this role',
+      });
+    }
+  });
 
 type CreateUserFormData = z.infer<typeof createUserSchema>;
 
@@ -49,6 +60,11 @@ export const CreateUserDialog: React.FC<CreateUserDialogProps> = ({
   const queryClient = useQueryClient();
   const { user, isHospitalAdmin } = useCurrentUser();
   const [serverError, setServerError] = React.useState<string | null>(null);
+
+  const [createdResult, setCreatedResult] = React.useState<{
+    user: any;
+    verificationUrl?: string;
+  } | null>(null);
 
   // Fetch facilities for Super Admin to link user to facility
   const { data: facilities = [] } = useQuery({
@@ -83,6 +99,7 @@ export const CreateUserDialog: React.FC<CreateUserDialogProps> = ({
   React.useEffect(() => {
     if (isOpen) {
       setServerError(null);
+      setCreatedResult(null);
       reset({
         name: '',
         email: '',
@@ -105,11 +122,25 @@ export const CreateUserDialog: React.FC<CreateUserDialogProps> = ({
         facilityId: isHospitalAdmin ? user?.facilityId || undefined : (data.facilityId || undefined),
       });
     },
-    onSuccess: () => {
+    onSuccess: (res: any) => {
       queryClient.invalidateQueries({ queryKey: ['users'] });
       queryClient.invalidateQueries({ queryKey: ['admin-hub-users'] });
+      let displayUrl = res.verificationUrl;
+      if (typeof window !== 'undefined' && displayUrl) {
+        try {
+          const parsed = new URL(displayUrl);
+          if (parsed.host !== window.location.host) {
+            displayUrl = `${window.location.origin}${parsed.pathname}${parsed.search}`;
+          }
+        } catch {
+          displayUrl = `${window.location.origin}${displayUrl.startsWith('/') ? '' : '/'}${displayUrl}`;
+        }
+      }
+      setCreatedResult({
+        user: res,
+        verificationUrl: displayUrl,
+      });
       onSuccess?.();
-      onClose();
     },
     onError: (err) => {
       setServerError(getErrorMessage(err));
@@ -140,14 +171,77 @@ export const CreateUserDialog: React.FC<CreateUserDialogProps> = ({
   const facilityNeedsLinking =
     ['HOSPITAL_ADMIN', 'HOSPITAL_STAFF', 'TREATMENT_FACILITY_STAFF'].includes(selectedRole);
 
+  const [copied, setCopied] = React.useState(false);
+
+  const copyVerificationLink = () => {
+    if (createdResult?.verificationUrl) {
+      navigator.clipboard.writeText(createdResult.verificationUrl);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    }
+  };
+
   return (
     <Dialog
       isOpen={isOpen}
       onClose={onClose}
-      title="Provision New User Account"
-      description="Create a certified user profile with authenticated role permissions."
+      title={createdResult ? 'User Provisioned Successfully' : 'Provision New User Account'}
+      description={
+        createdResult
+          ? 'Account created. Email verification token has been generated and dispatched.'
+          : 'Create a certified user profile with authenticated role permissions.'
+      }
       maxWidth="md"
     >
+      {createdResult ? (
+        <div className="space-y-4 pt-2">
+          <div className="p-4 bg-emerald-50 border border-emerald-200 rounded-xl space-y-2 text-xs text-emerald-950">
+            <p className="font-bold text-emerald-900">
+              ✓ User Profile Created & Verification Dispatched
+            </p>
+            <p className="text-emerald-800">
+              Account for <strong>{createdResult.user.name}</strong> ({createdResult.user.email}) has been provisioned with status <strong>UNVERIFIED</strong>.
+            </p>
+          </div>
+
+          {createdResult.verificationUrl && (
+            <div className="p-3.5 bg-neutral-900 text-white rounded-xl space-y-2 text-xs">
+              <div className="flex items-center justify-between">
+                <span className="text-[11px] font-semibold text-neutral-300">
+                  Hackathon / Operator Verification Link:
+                </span>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  onClick={copyVerificationLink}
+                  className="h-6 text-[10px] px-2 bg-neutral-800 border-neutral-700 text-neutral-200 hover:bg-neutral-700"
+                >
+                  {copied ? 'Copied!' : 'Copy Link'}
+                </Button>
+              </div>
+              <p className="font-mono text-[11px] text-blue-300 break-all bg-neutral-950 p-2 rounded border border-neutral-800">
+                {createdResult.verificationUrl}
+              </p>
+              <p className="text-[10px] text-neutral-400">
+                Opening this link certifies email ownership and activates the user account for login.
+              </p>
+            </div>
+          )}
+
+          <div className="flex justify-end pt-2">
+            <Button
+              type="button"
+              variant="primary"
+              size="md"
+              onClick={onClose}
+              className="w-full sm:w-auto font-semibold"
+            >
+              Done
+            </Button>
+          </div>
+        </div>
+      ) : (
       <form onSubmit={handleSubmit(onSubmit)} className="space-y-4 pt-1">
         {serverError && (
           <div className="p-3 bg-status-danger-bg border border-status-danger/20 rounded-lg flex items-center gap-2 text-xs text-status-danger">
@@ -220,19 +314,22 @@ export const CreateUserDialog: React.FC<CreateUserDialogProps> = ({
         {!isHospitalAdmin && (
           <div>
             <label className="block text-xs font-semibold text-neutral-700 uppercase tracking-wider mb-1">
-              Affiliated Facility {facilityNeedsLinking ? '(Recommended for this role)' : '(Optional)'}
+              Affiliated Facility {facilityNeedsLinking ? <span className="text-status-danger">* (Required for this role)</span> : '(Optional)'}
             </label>
             <Select
               options={[
-                { value: '', label: 'None / Central Authority' },
+                { value: '', label: facilityNeedsLinking ? '-- Select Hospital / Facility --' : 'None / Central Authority' },
                 ...facilities.map((f) => ({
                   value: f.id,
                   label: `${f.name} (${f.type === 'HOSPITAL' ? 'Hospital' : 'CBWTF'} - ${f.registrationNumber})`,
                 })),
               ]}
               value={watch('facilityId') || ''}
-              onChange={(e) => setValue('facilityId', e.target.value || undefined)}
+              onChange={(e) => setValue('facilityId', e.target.value || undefined, { shouldValidate: true })}
             />
+            {errors.facilityId && (
+              <p className="text-[11px] text-status-danger mt-1">{errors.facilityId.message}</p>
+            )}
           </div>
         )}
 
@@ -274,6 +371,7 @@ export const CreateUserDialog: React.FC<CreateUserDialogProps> = ({
           </Button>
         </div>
       </form>
+      )}
     </Dialog>
   );
 };

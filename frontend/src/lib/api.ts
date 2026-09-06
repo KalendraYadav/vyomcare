@@ -347,6 +347,18 @@ export const authApi = {
     }
     return res;
   },
+  verifyEmail: async (token: string): Promise<{ success: boolean; message: string }> => {
+    return apiFetch<{ success: boolean; message: string }>('/auth/verify-email', {
+      method: 'POST',
+      body: { token },
+    });
+  },
+  resendVerification: async (email: string): Promise<{ success: boolean; message: string }> => {
+    return apiFetch<{ success: boolean; message: string }>('/auth/resend-verification', {
+      method: 'POST',
+      body: { email },
+    });
+  },
 };
 
 export const usersApi = {

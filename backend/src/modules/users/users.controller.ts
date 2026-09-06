@@ -7,7 +7,9 @@ import {
   Param,
   Query,
   UseGuards,
+  Req,
 } from '@nestjs/common';
+import { Request } from 'express';
 import { AuthGuard } from '@nestjs/passport';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { Roles } from '../../common/decorators/roles.decorator';
@@ -15,6 +17,7 @@ import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { UserRole } from '@prisma/client';
 import { UsersService } from './users.service';
 import { CreateUserDto } from './dto/create-user.dto';
+import { extractRequestBaseUrl } from '../../common/email/email.service';
 
 @Controller('users')
 @UseGuards(AuthGuard('jwt'), RolesGuard)
@@ -23,8 +26,13 @@ export class UsersController {
 
   @Post()
   @Roles(UserRole.SUPER_ADMIN, UserRole.HOSPITAL_ADMIN)
-  create(@Body() dto: CreateUserDto, @CurrentUser() user: any) {
-    return this.svc.create(dto, user);
+  create(
+    @Body() dto: CreateUserDto,
+    @CurrentUser() user: any,
+    @Req() req: Request,
+  ) {
+    const appBaseUrl = extractRequestBaseUrl(req);
+    return this.svc.create(dto, user, appBaseUrl);
   }
 
   @Get()

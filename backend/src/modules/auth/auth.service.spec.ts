@@ -3,15 +3,21 @@ import { AuthService } from './auth.service';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { JwtService } from '@nestjs/jwt';
 import { RedisService } from '../../common/redis/redis.service';
-import { UnauthorizedException, ForbiddenException } from '@nestjs/common';
+import { EmailService } from '../../common/email/email.service';
+import {
+  UnauthorizedException,
+  ForbiddenException,
+  BadRequestException,
+} from '@nestjs/common';
 import * as bcrypt from 'bcryptjs';
 import * as crypto from 'crypto';
 
-describe('AuthService (Production Hardened)', () => {
+describe('AuthService (Production Hardened + Email Verification)', () => {
   let service: AuthService;
   let prisma: any;
   let jwtService: any;
   let redis: any;
+  let emailService: any;
 
   const mockUser = {
     id: 'user-uuid-1',
@@ -21,10 +27,30 @@ describe('AuthService (Production Hardened)', () => {
     role: 'HOSPITAL_ADMIN',
     facilityId: 'facility-uuid-1',
     status: 'ACTIVE',
+    emailVerified: true,
+    mustChangePassword: false,
+  };
+
+  const mockUnverifiedUser = {
+    id: 'user-uuid-2',
+    email: 'newuser@hospital.in',
+    name: 'New Staff',
+    passwordHash: '',
+    role: 'HOSPITAL_STAFF',
+    facilityId: 'facility-uuid-1',
+    status: 'ACTIVE',
+    emailVerified: false,
+    emailVerificationTokenHash: crypto
+      .createHash('sha256')
+      .update('valid-token-1234567890abcdef')
+      .digest('hex'),
+    emailVerificationExpiresAt: new Date(Date.now() + 86400000), // +24h
+    mustChangePassword: true,
   };
 
   beforeAll(async () => {
     mockUser.passwordHash = await bcrypt.hash('CorrectPass#123', 10);
+    mockUnverifiedUser.passwordHash = await bcrypt.hash('CorrectPass#123', 10);
   });
 
   beforeEach(async () => {
@@ -63,12 +89,20 @@ describe('AuthService (Production Hardened)', () => {
       sign: jest.fn(() => 'mock-jwt-access-token'),
     };
 
+    emailService = {
+      sendVerificationEmail: jest.fn().mockResolvedValue({
+        success: true,
+        verificationUrl: 'http://localhost:3000/verify-email?token=xyz',
+      }),
+    };
+
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         AuthService,
         { provide: PrismaService, useValue: prisma },
         { provide: JwtService, useValue: jwtService },
         { provide: RedisService, useValue: redis },
+        { provide: EmailService, useValue: emailService },
       ],
     }).compile();
 
@@ -137,7 +171,7 @@ describe('AuthService (Production Hardened)', () => {
     });
   });
 
-  describe('P2-01: Redis Distributed Login Rate Limiting', () => {
+  describe('P2-01: Redis Distributed Login Rate Limiting & Verification Gate', () => {
     it('should record failed login in Redis and lock out account after 5 failed attempts', async () => {
       prisma.user.findUnique.mockResolvedValue(mockUser);
       const mockRes: any = { cookie: jest.fn() };
@@ -172,7 +206,19 @@ describe('AuthService (Production Hardened)', () => {
       ).rejects.toThrow(ForbiddenException);
     });
 
-    it('should clear failed attempts counter in Redis upon successful login', async () => {
+    it('should reject login for unverified user with explicit message', async () => {
+      prisma.user.findUnique.mockResolvedValue(mockUnverifiedUser);
+      const mockRes: any = { cookie: jest.fn() };
+
+      await expect(
+        service.login(
+          { email: 'newuser@hospital.in', password: 'CorrectPass#123' },
+          mockRes,
+        ),
+      ).rejects.toThrow(ForbiddenException);
+    });
+
+    it('should allow login and clear failed attempts in Redis for verified user', async () => {
       prisma.user.findUnique.mockResolvedValue(mockUser);
       prisma.user.update.mockResolvedValue(mockUser);
       prisma.refreshToken.create.mockResolvedValue({});
@@ -185,6 +231,76 @@ describe('AuthService (Production Hardened)', () => {
 
       expect(result.accessToken).toBe('mock-jwt-access-token');
       expect(redis.del).toHaveBeenCalledWith('auth:lockout:admin@hospital.in');
+    });
+  });
+
+  describe('P20: Email Verification Cryptographic Lifecycle', () => {
+    it('should successfully verify email with matching SHA-256 token hash and clear token fields', async () => {
+      const rawToken = 'valid-token-1234567890abcdef';
+      const tokenHash = crypto
+        .createHash('sha256')
+        .update(rawToken)
+        .digest('hex');
+
+      prisma.user.findUnique.mockResolvedValue(mockUnverifiedUser);
+      prisma.user.update.mockResolvedValue({
+        ...mockUnverifiedUser,
+        emailVerified: true,
+      });
+
+      const res = await service.verifyEmail({ token: rawToken });
+
+      expect(prisma.user.findUnique).toHaveBeenCalledWith({
+        where: { emailVerificationTokenHash: tokenHash },
+      });
+      expect(prisma.user.update).toHaveBeenCalledWith({
+        where: { id: mockUnverifiedUser.id },
+        data: expect.objectContaining({
+          emailVerified: true,
+          emailVerificationTokenHash: null,
+          emailVerificationExpiresAt: null,
+        }),
+      });
+      expect(res.success).toBe(true);
+    });
+
+    it('should reject invalid or already consumed verification token', async () => {
+      prisma.user.findUnique.mockResolvedValue(null);
+
+      await expect(
+        service.verifyEmail({ token: 'nonexistent-token-12345678' }),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('should reject expired verification token', async () => {
+      const rawToken = 'expired-token-1234567890abcdef';
+      prisma.user.findUnique.mockResolvedValue({
+        ...mockUnverifiedUser,
+        emailVerificationExpiresAt: new Date(Date.now() - 3600000), // 1 hour ago
+      });
+
+      await expect(service.verifyEmail({ token: rawToken })).rejects.toThrow(
+        BadRequestException,
+      );
+    });
+
+    it('should allow resending verification email with rate limit and token rotation', async () => {
+      prisma.user.findUnique.mockResolvedValue(mockUnverifiedUser);
+      prisma.user.update.mockResolvedValue(mockUnverifiedUser);
+
+      const res = await service.resendVerification({
+        email: 'newuser@hospital.in',
+      });
+
+      expect(res.success).toBe(true);
+      expect(prisma.user.update).toHaveBeenCalledWith({
+        where: { id: mockUnverifiedUser.id },
+        data: expect.objectContaining({
+          emailVerificationTokenHash: expect.any(String),
+          emailVerificationExpiresAt: expect.any(Date),
+        }),
+      });
+      expect(emailService.sendVerificationEmail).toHaveBeenCalled();
     });
   });
 });

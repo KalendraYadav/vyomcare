@@ -27,6 +27,10 @@ export class CreateWasteBatchDto {
   photoUrl?: string;
 
   @IsOptional()
+  @IsUUID()
+  hospitalId?: string;
+
+  @IsOptional()
   @IsString()
   idempotencyKey?: string;
 }

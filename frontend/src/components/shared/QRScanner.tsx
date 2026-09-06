@@ -7,6 +7,8 @@ import {
   CameraOff,
   ShieldAlert,
   HelpCircle,
+  RefreshCw,
+  SwitchCamera,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Alert } from '@/components/ui/alert';
@@ -18,7 +20,67 @@ export interface QRScannerProps {
   className?: string;
 }
 
+export interface CameraDeviceInfo {
+  id: string;
+  label: string;
+  facing: 'environment' | 'user' | 'unknown';
+}
+
 const SCANNER_ELEMENT_ID = 'biotrack-qr-reader-viewport';
+
+/**
+ * Format a human-readable and accurate camera label from device information.
+ */
+function formatCameraLabel(
+  device: { id: string; label: string },
+  index: number,
+  activeDeviceId?: string | null
+): CameraDeviceInfo {
+  const rawLabel = (device.label || '').trim();
+  const lower = rawLabel.toLowerCase();
+
+  let facing: 'environment' | 'user' | 'unknown' = 'unknown';
+  if (
+    lower.includes('back') ||
+    lower.includes('rear') ||
+    lower.includes('environment') ||
+    lower.includes('world') ||
+    lower.includes('facing back') ||
+    lower.includes('camera2 0')
+  ) {
+    facing = 'environment';
+  } else if (
+    lower.includes('front') ||
+    lower.includes('user') ||
+    lower.includes('selfie') ||
+    lower.includes('facing front') ||
+    lower.includes('camera2 1')
+  ) {
+    facing = 'user';
+  }
+
+  let friendlyName = rawLabel;
+  if (!rawLabel) {
+    if (index === 0) {
+      friendlyName = 'Primary Camera';
+    } else {
+      friendlyName = `Camera ${index + 1}`;
+    }
+  } else {
+    // Enhance ambiguous labels
+    if (facing === 'environment' && !lower.includes('rear') && !lower.includes('back')) {
+      friendlyName = `${rawLabel} (Rear / Environment)`;
+    } else if (facing === 'user' && !lower.includes('front')) {
+      friendlyName = `${rawLabel} (Front / Selfie)`;
+    }
+  }
+
+  return {
+    id: device.id,
+    label: friendlyName,
+    facing,
+  };
+}
 
 export function QRScanner({ onScan, onError, disabled = false, className = '' }: QRScannerProps) {
   const [isScanning, setIsScanning] = React.useState(false);
@@ -26,13 +88,15 @@ export function QRScanner({ onScan, onError, disabled = false, className = '' }:
   const [errorMsg, setErrorMsg] = React.useState<string | null>(null);
   const [isSecure, setIsSecure] = React.useState(true);
   const [hasMediaDevices, setHasMediaDevices] = React.useState(true);
-  const [cameras, setCameras] = React.useState<Array<{ id: string; label: string }>>([]);
+  const [cameras, setCameras] = React.useState<CameraDeviceInfo[]>([]);
   const [selectedCameraId, setSelectedCameraId] = React.useState<string | null>(null);
+  const [activeFacing, setActiveFacing] = React.useState<string | null>(null);
   const [lastScannedText, setLastScannedText] = React.useState<string | null>(null);
   const [showInsecureHelp, setShowInsecureHelp] = React.useState(false);
 
   const scannerRef = React.useRef<Html5Qrcode | null>(null);
   const isMountedRef = React.useRef(true);
+  const isStartingRef = React.useRef(false);
   const lastScannedTimeRef = React.useRef<number>(0);
 
   // Check browser capabilities & security context on mount
@@ -74,21 +138,51 @@ export function QRScanner({ onScan, onError, disabled = false, className = '' }:
         console.warn('QRScanner stop error:', err);
       } finally {
         scannerRef.current = null;
-        if (isMountedRef.current) {
-          setIsScanning(false);
-          setIsInitializing(false);
+      }
+    }
+
+    // Force release all active MediaStream tracks on any video element
+    if (typeof document !== 'undefined') {
+      const videoEl = document.querySelector(
+        `#${SCANNER_ELEMENT_ID} video`
+      ) as HTMLVideoElement | null;
+      if (videoEl && videoEl.srcObject) {
+        try {
+          const stream = videoEl.srcObject as MediaStream;
+          stream.getTracks().forEach((track) => {
+            track.stop();
+          });
+          videoEl.srcObject = null;
+        } catch (e) {
+          console.warn('Track cleanup error:', e);
         }
       }
     }
+
+    if (isMountedRef.current) {
+      setIsScanning(false);
+      setIsInitializing(false);
+      setActiveFacing(null);
+    }
   };
 
-  const startScanning = async () => {
+  /**
+   * Start camera scanner with resilient camera target selection and track inspection.
+   */
+  const startScanning = async (
+    targetCamera?: string | MediaTrackConstraints,
+    retryCount = 0
+  ) => {
+    if (isStartingRef.current) return;
+    isStartingRef.current = true;
+
     setErrorMsg(null);
     setIsInitializing(true);
 
     // Verify secure context & media devices
     if (!isSecure && !hasMediaDevices) {
       setIsInitializing(false);
+      isStartingRef.current = false;
       setErrorMsg(
         'Browser Security Restriction: Camera API (getUserMedia) is only accessible in Secure Contexts (HTTPS or localhost). To use the camera on this device, serve via HTTPS or use the manual barcode entry below.'
       );
@@ -96,18 +190,18 @@ export function QRScanner({ onScan, onError, disabled = false, className = '' }:
     }
 
     try {
-      // Ensure any previous instance is stopped
+      // Ensure any prior instance is completely stopped
       if (scannerRef.current) {
         await stopScanning();
       }
 
-      // Set scanning/initializing states so the container has valid non-zero dimensions
+      // Pre-render container with non-zero dimensions to avoid black-screen zero-dimension issue
       if (isMountedRef.current) {
         setIsScanning(true);
         setIsInitializing(true);
       }
 
-      // Small delay to ensure React commits DOM update and container has real dimensions
+      // Small DOM flush pause
       await new Promise((resolve) => setTimeout(resolve, 80));
 
       const html5QrCode = new Html5Qrcode(SCANNER_ELEMENT_ID, {
@@ -115,37 +209,18 @@ export function QRScanner({ onScan, onError, disabled = false, className = '' }:
       });
       scannerRef.current = html5QrCode;
 
-      // Query available video devices
-      let targetCameraParam: string | MediaTrackConstraints = {
-        facingMode: 'environment',
-      };
+      // Determine optimal camera configuration:
+      // If targetCamera is explicitly provided, use it.
+      // Otherwise, prioritize environment / rear facing mode.
+      let cameraConfig: string | MediaTrackConstraints;
 
-      try {
-        const devices = await Html5Qrcode.getCameras();
-        if (devices && devices.length > 0) {
-          setCameras(devices);
-          if (selectedCameraId) {
-            targetCameraParam = { deviceId: { exact: selectedCameraId } };
-          } else {
-            // Find back/environment camera
-            const backCamera = devices.find(
-              (d) =>
-                d.label.toLowerCase().includes('back') ||
-                d.label.toLowerCase().includes('rear') ||
-                d.label.toLowerCase().includes('environment')
-            );
-            if (backCamera) {
-              setSelectedCameraId(backCamera.id);
-              targetCameraParam = { deviceId: { exact: backCamera.id } };
-            } else {
-              setSelectedCameraId(devices[0].id);
-              targetCameraParam = { deviceId: { exact: devices[0].id } };
-            }
-          }
-        }
-      } catch {
-        // Camera enumeration might fail before permission is granted; fallback to facingMode
-        targetCameraParam = { facingMode: 'environment' };
+      if (targetCamera) {
+        cameraConfig = targetCamera;
+      } else if (selectedCameraId) {
+        cameraConfig = { deviceId: { exact: selectedCameraId } };
+      } else {
+        // Default to environment facing mode for rear camera barcode scanning
+        cameraConfig = { facingMode: 'environment' };
       }
 
       const config: Html5QrcodeCameraScanConfig = {
@@ -157,40 +232,55 @@ export function QRScanner({ onScan, onError, disabled = false, className = '' }:
         },
       };
 
-      await html5QrCode.start(
-        targetCameraParam,
-        config,
-        (decodedText) => {
-          // Prevent rapid duplicate scans within 1.5s
-          const now = Date.now();
-          if (now - lastScannedTimeRef.current < 1500) {
-            return;
-          }
-          lastScannedTimeRef.current = now;
+      try {
+        await html5QrCode.start(
+          cameraConfig,
+          config,
+          (decodedText) => {
+            // Prevent rapid duplicate scans within 1.5s
+            const now = Date.now();
+            if (now - lastScannedTimeRef.current < 1500) {
+              return;
+            }
+            lastScannedTimeRef.current = now;
 
-          if (isMountedRef.current) {
-            setLastScannedText(decodedText);
-            setTimeout(() => {
-              if (isMountedRef.current) setLastScannedText(null);
-            }, 3000);
-          }
+            if (isMountedRef.current) {
+              setLastScannedText(decodedText);
+              setTimeout(() => {
+                if (isMountedRef.current) setLastScannedText(null);
+              }, 3000);
+            }
 
-          // Haptic feedback if supported on mobile
-          if (typeof navigator !== 'undefined' && navigator.vibrate) {
-            navigator.vibrate(80);
-          }
+            // Mobile haptic vibration feedback
+            if (typeof navigator !== 'undefined' && navigator.vibrate) {
+              navigator.vibrate(80);
+            }
 
-          onScan(decodedText);
-        },
-        (_errorMessage) => {
-          // Continuous frame parsing message — ignore transient misses
+            onScan(decodedText);
+          },
+          (_errorMessage) => {
+            // Continuous frame parsing missed barcode — expected frame-by-frame
+          }
+        );
+      } catch (startErr: unknown) {
+        // Fallback strategy: If explicit deviceId failed, retry with environment or user facing mode
+        if (typeof targetCamera === 'object' && 'deviceId' in targetCamera && retryCount === 0) {
+          console.warn('Specific deviceId start failed, falling back to facingMode: environment', startErr);
+          isStartingRef.current = false;
+          return startScanning({ facingMode: 'environment' }, 1);
+        } else if (retryCount === 0 && cameraConfig !== undefined) {
+          console.warn('FacingMode environment failed, attempting generic camera fallback', startErr);
+          isStartingRef.current = false;
+          return startScanning({ facingMode: 'user' }, 1);
         }
-      );
+        throw startErr;
+      }
 
-      // Post-start enforcement: ensure video element is playing, unmuted, playsinline, and visible
+      // Post-start inspection and video element setup
       const videoEl = document.querySelector(
         `#${SCANNER_ELEMENT_ID} video`
       ) as HTMLVideoElement | null;
+
       if (videoEl) {
         videoEl.setAttribute('playsinline', 'true');
         videoEl.setAttribute('webkit-playsinline', 'true');
@@ -201,9 +291,48 @@ export function QRScanner({ onScan, onError, disabled = false, className = '' }:
         videoEl.style.display = 'block';
         videoEl.style.visibility = 'visible';
         videoEl.style.opacity = '1';
+
         if (videoEl.paused) {
           videoEl.play().catch(() => {});
         }
+
+        // Inspect the active MediaStreamTrack to verify actual physical camera & deviceId
+        if (videoEl.srcObject) {
+          const stream = videoEl.srcObject as MediaStream;
+          const videoTrack = stream.getVideoTracks()[0];
+          if (videoTrack) {
+            const settings = videoTrack.getSettings ? videoTrack.getSettings() : null;
+            if (settings) {
+              if (settings.deviceId && isMountedRef.current) {
+                setSelectedCameraId(settings.deviceId);
+              }
+              if (settings.facingMode && isMountedRef.current) {
+                setActiveFacing(settings.facingMode);
+              }
+            }
+          }
+        }
+      }
+
+      // Enumerate available cameras now that permission is active to populate clear labels
+      try {
+        const rawDevices = await Html5Qrcode.getCameras();
+        if (rawDevices && rawDevices.length > 0 && isMountedRef.current) {
+          const formatted = rawDevices.map((d, i) => formatCameraLabel(d, i));
+          setCameras(formatted);
+
+          // If no selectedCameraId was set, or if it was matched, verify consistency
+          if (!selectedCameraId && formatted.length > 0) {
+            const rearCam = formatted.find((c) => c.facing === 'environment');
+            if (rearCam) {
+              setSelectedCameraId(rearCam.id);
+            } else {
+              setSelectedCameraId(formatted[0].id);
+            }
+          }
+        }
+      } catch (enumErr) {
+        console.warn('Camera enumeration warning:', enumErr);
       }
 
       if (isMountedRef.current) {
@@ -240,16 +369,44 @@ export function QRScanner({ onScan, onError, disabled = false, className = '' }:
         setErrorMsg(userError);
         onError?.(userError);
       }
+    } finally {
+      isStartingRef.current = false;
     }
   };
 
+  /**
+   * Handle dropdown camera selection with direct argument passing (no stale state lag).
+   */
   const handleCameraChange = async (cameraId: string) => {
     setSelectedCameraId(cameraId);
     if (isScanning) {
       await stopScanning();
-      setTimeout(() => {
-        startScanning();
-      }, 100);
+      // Pass the specific deviceId directly to bypass React state asynchronous updates
+      await startScanning({ deviceId: { exact: cameraId } });
+    }
+  };
+
+  /**
+   * Toggle between front and rear cameras (Flip camera button).
+   */
+  const handleFlipCamera = async () => {
+    if (cameras.length <= 1) return;
+    const currentIndex = cameras.findIndex((c) => c.id === selectedCameraId);
+    const currentCam = cameras[currentIndex];
+
+    let nextCamera: CameraDeviceInfo | undefined;
+    if (currentCam && currentCam.facing !== 'unknown') {
+      const targetFacing = currentCam.facing === 'environment' ? 'user' : 'environment';
+      nextCamera = cameras.find((c) => c.facing === targetFacing);
+    }
+
+    if (!nextCamera) {
+      const nextIndex = (currentIndex + 1) % cameras.length;
+      nextCamera = cameras[nextIndex];
+    }
+
+    if (nextCamera && nextCamera.id !== selectedCameraId) {
+      await handleCameraChange(nextCamera.id);
     }
   };
 
@@ -289,16 +446,13 @@ export function QRScanner({ onScan, onError, disabled = false, className = '' }:
               <p className="font-bold text-neutral-900">Options for Mobile Camera Testing:</p>
               <ol className="list-decimal list-inside space-y-1 text-neutral-700">
                 <li>
-                  <strong>Manual Barcode Entry (Zero Setup):</strong> Use the manual input form below. Fill sample codes or type batch IDs to verify end-to-end custody workflows.
+                  <strong>Cloudflare HTTPS Tunnel (Zero Setup):</strong> Open the HTTPS tunnel URL on your phone for full camera permissions.
                 </li>
                 <li>
-                  <strong>Android Chrome Flag (No Certs Needed):</strong> On mobile Chrome, open <code className="bg-neutral-100 px-1 py-0.5 rounded text-primary">chrome://flags/#unsafely-treat-insecure-origin-as-secure</code>, add <code className="bg-neutral-100 px-1 py-0.5 rounded text-primary">http://192.168.1.20:3000</code>, enable, and relaunch Chrome.
+                  <strong>Manual Barcode Entry:</strong> Use the manual input form below to test all workflows.
                 </li>
                 <li>
-                  <strong>Chrome USB Port Forwarding:</strong> Connect phone via USB, run <code className="bg-neutral-100 px-1 py-0.5 rounded text-primary">adb reverse tcp:3000 tcp:3000</code>, then open <code className="bg-neutral-100 px-1 py-0.5 rounded text-primary">http://localhost:3000</code> on phone (treated as secure).
-                </li>
-                <li>
-                  <strong>HTTPS Tunnel / Next.js HTTPS:</strong> Run dev server with HTTPS (e.g. Next.js experimental HTTPS, ngrok, or Cloudflare tunnel).
+                  <strong>Android Chrome Flag:</strong> On mobile Chrome, open <code className="bg-neutral-100 px-1 py-0.5 rounded text-primary">chrome://flags/#unsafely-treat-insecure-origin-as-secure</code>, add origin, enable, and relaunch Chrome.
                 </li>
               </ol>
             </div>
@@ -344,7 +498,7 @@ export function QRScanner({ onScan, onError, disabled = false, className = '' }:
                 Optical QR Scanner
               </p>
               <p className="text-xs text-neutral-400">
-                Tap below to open device camera and scan adhesive thermal barcode labels.
+                Tap below to activate device camera and scan adhesive thermal barcode labels.
               </p>
             </div>
 
@@ -354,7 +508,7 @@ export function QRScanner({ onScan, onError, disabled = false, className = '' }:
               className="gap-2 font-bold px-6 shadow-sm"
               disabled={disabled || isInitializing}
               isLoading={isInitializing}
-              onClick={startScanning}
+              onClick={() => startScanning()}
             >
               <Camera className="w-5 h-5" />
               <span>{isInitializing ? 'Activating Camera...' : 'Open Camera Scanner'}</span>
@@ -373,47 +527,66 @@ export function QRScanner({ onScan, onError, disabled = false, className = '' }:
                 </span>
               </div>
             )}
-            <div className="p-3 bg-neutral-900/90 backdrop-blur-xs border-t border-neutral-800 flex flex-wrap items-center justify-between gap-2">
+            <div className="p-3 bg-neutral-900/95 backdrop-blur-xs border-t border-neutral-800 flex flex-wrap items-center justify-between gap-2">
               <div className="flex items-center gap-2">
                 <span className="relative flex h-2.5 w-2.5">
                   <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
                   <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500" />
                 </span>
                 <span className="text-xs font-semibold text-neutral-200">
-                  Camera Live
+                  {activeFacing === 'environment'
+                    ? 'Rear Camera Active'
+                    : activeFacing === 'user'
+                    ? 'Front Camera Active'
+                    : 'Camera Live'}
                 </span>
               </div>
 
-            <div className="flex items-center gap-2">
-              {cameras.length > 1 && (
-                <select
-                  value={selectedCameraId || ''}
-                  onChange={(e) => handleCameraChange(e.target.value)}
-                  aria-label="Select camera"
-                  className="bg-neutral-800 border border-neutral-700 text-neutral-200 text-xs rounded-md px-2 py-1 focus:outline-none focus:ring-1 focus:ring-primary"
-                >
-                  {cameras.map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.label || `Camera ${c.id.slice(0, 6)}`}
-                    </option>
-                  ))}
-                </select>
-              )}
+              <div className="flex items-center gap-2">
+                {cameras.length > 1 && (
+                  <>
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      size="sm"
+                      className="text-xs gap-1 bg-neutral-800 border-neutral-700 text-neutral-200 hover:bg-neutral-700 h-8 px-2.5"
+                      onClick={handleFlipCamera}
+                      title="Flip camera"
+                    >
+                      <SwitchCamera className="w-3.5 h-3.5 text-primary" />
+                      <span className="hidden sm:inline">Flip</span>
+                    </Button>
 
-              <Button
-                variant="secondary"
-                size="sm"
-                className="text-xs gap-1.5 bg-neutral-800 border-neutral-700 text-neutral-200 hover:bg-neutral-700 hover:text-white h-8"
-                onClick={stopScanning}
-              >
-                <CameraOff className="w-3.5 h-3.5 text-red-400" />
-                <span>Close Camera</span>
-              </Button>
+                    <select
+                      value={selectedCameraId || ''}
+                      onChange={(e) => handleCameraChange(e.target.value)}
+                      aria-label="Select camera"
+                      className="bg-neutral-800 border border-neutral-700 text-neutral-200 text-xs rounded-md px-2 py-1 focus:outline-none focus:ring-1 focus:ring-primary max-w-[150px] truncate"
+                    >
+                      {cameras.map((c) => (
+                        <option key={c.id} value={c.id}>
+                          {c.label}
+                        </option>
+                      ))}
+                    </select>
+                  </>
+                )}
+
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  className="text-xs gap-1.5 bg-neutral-800 border-neutral-700 text-neutral-200 hover:bg-neutral-700 hover:text-white h-8"
+                  onClick={stopScanning}
+                >
+                  <CameraOff className="w-3.5 h-3.5 text-red-400" />
+                  <span>Close</span>
+                </Button>
+              </div>
             </div>
-          </div>
-        </>
-      )}
+          </>
+        )}
+      </div>
     </div>
-  </div>
   );
 }
+

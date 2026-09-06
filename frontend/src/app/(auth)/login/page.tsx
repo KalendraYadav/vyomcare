@@ -254,33 +254,35 @@ function LoginFormContent() {
             </Button>
           </form>
 
-          {/* Role Presets Section (design.md §18.1) */}
-          <div className="mt-8 pt-6 border-t border-neutral-200">
-            <div className="flex items-center justify-between mb-3">
-              <div className="flex items-center gap-1.5 text-xs font-bold text-neutral-700 uppercase tracking-wider">
-                <Sparkles className="w-3.5 h-3.5 text-primary" />
-                <span>Quick Role Presets (Demo & Audit Mode)</span>
+          {/* Role Presets Section (design.md §18.1) - Gated by NEXT_PUBLIC_DEMO_MODE */}
+          {process.env.NEXT_PUBLIC_DEMO_MODE !== 'false' && (
+            <div className="mt-8 pt-6 border-t border-neutral-200">
+              <div className="flex items-center justify-between mb-3">
+                <div className="flex items-center gap-1.5 text-xs font-bold text-neutral-700 uppercase tracking-wider">
+                  <Sparkles className="w-3.5 h-3.5 text-primary" />
+                  <span>Quick Role Presets (Demo & Audit Mode)</span>
+                </div>
+                <span className="text-[10px] text-neutral-400">Password: BioTrack@2026</span>
               </div>
-              <span className="text-[10px] text-neutral-400">Password: BioTrack@2026</span>
-            </div>
 
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-              {PRESET_USERS.map((preset) => (
-                <button
-                  key={preset.email}
-                  type="button"
-                  onClick={() => applyPreset(preset.email)}
-                  className={`p-2 text-left rounded-lg border transition-all text-xs hover:shadow-xs active:scale-98 cursor-pointer ${preset.badgeColor}`}
-                >
-                  <span className="font-semibold block truncate">{preset.roleName}</span>
-                  <span className="text-[10px] opacity-75 truncate flex items-center gap-1 mt-0.5">
-                    <Building2 className="w-2.5 h-2.5 flex-shrink-0" />
-                    <span className="truncate">{preset.facility}</span>
-                  </span>
-                </button>
-              ))}
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                {PRESET_USERS.map((preset) => (
+                  <button
+                    key={preset.email}
+                    type="button"
+                    onClick={() => applyPreset(preset.email)}
+                    className={`p-2 text-left rounded-lg border transition-all text-xs hover:shadow-xs active:scale-98 cursor-pointer ${preset.badgeColor}`}
+                  >
+                    <span className="font-semibold block truncate">{preset.roleName}</span>
+                    <span className="text-[10px] opacity-75 truncate flex items-center gap-1 mt-0.5">
+                      <Building2 className="w-2.5 h-2.5 flex-shrink-0" />
+                      <span className="truncate">{preset.facility}</span>
+                    </span>
+                  </button>
+                ))}
+              </div>
             </div>
-          </div>
+          )}
         </div>
 
         <div className="pt-6 text-center text-xs text-neutral-400 border-t border-neutral-100 mt-6">

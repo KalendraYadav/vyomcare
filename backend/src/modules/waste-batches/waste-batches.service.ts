@@ -55,8 +55,22 @@ export class WasteBatchesService {
     dto: CreateWasteBatchDto,
     user: { userId: string; facilityId: string | null; role: string },
   ) {
-    if (!user.facilityId)
-      throw new ForbiddenException('No facility associated with your account');
+    let hospitalId = user.facilityId;
+    if (!hospitalId) {
+      if (user.role === UserRole.SUPER_ADMIN && dto.hospitalId) {
+        hospitalId = dto.hospitalId;
+      } else {
+        throw new ForbiddenException('No facility associated with your account');
+      }
+    }
+
+    // Verify facility exists and is an active hospital
+    const hospital = await this.prisma.facility.findUnique({
+      where: { id: hospitalId },
+    });
+    if (!hospital || hospital.type !== 'HOSPITAL' || hospital.status === 'SUSPENDED') {
+      throw new ForbiddenException('Associated facility is not an active hospital');
+    }
 
     // Idempotency (ADR-06)
     if (dto.idempotencyKey) {
@@ -82,7 +96,7 @@ export class WasteBatchesService {
         data: {
           wasteId,
           categoryId: dto.categoryId,
-          hospitalId: user.facilityId!,
+          hospitalId,
           department: dto.department,
           quantity: dto.quantity,
           unit: dto.unit,

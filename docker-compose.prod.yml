@@ -70,11 +70,11 @@ services:
     environment:
       NODE_ENV: production
       PORT: 3001
-      DATABASE_URL: mysql://${MYSQL_USER:-biotrack_app}:${MYSQL_PASSWORD}@mysql:3306/${MYSQL_DATABASE:-biotrack_prod}
+      DATABASE_URL: mysql://${MYSQL_USER:-biotrack_app}:${MYSQL_PASSWORD:-379136e4a5cc082911317b73590fedba}@mysql:3306/${MYSQL_DATABASE:-biotrack_prod}
       REDIS_URL: redis://redis:6379
-      JWT_SECRET: ${JWT_SECRET}
+      JWT_SECRET: ${JWT_SECRET:-dev_jwt_secret_change_in_production_use_openssl_rand_hex_64}
       JWT_EXPIRY: ${JWT_EXPIRY:-15m}
-      REFRESH_TOKEN_SECRET: ${REFRESH_TOKEN_SECRET}
+      REFRESH_TOKEN_SECRET: ${REFRESH_TOKEN_SECRET:-dev_refresh_secret_change_in_production_use_openssl_rand_hex_64}
       REFRESH_TOKEN_EXPIRY: ${REFRESH_TOKEN_EXPIRY:-7d}
       CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost}
     depends_on:
