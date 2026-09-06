@@ -16,9 +16,9 @@ export function PrintableQRLabel({ batch, codeValue, className = '' }: Printable
   React.useEffect(() => {
     let isMounted = true;
     QRCode.toDataURL(codeValue, {
-      errorCorrectionLevel: 'H',
-      margin: 1,
-      width: 250,
+      errorCorrectionLevel: 'M',
+      margin: 2,
+      width: 320,
       color: {
         dark: '#000000',
         light: '#FFFFFF',

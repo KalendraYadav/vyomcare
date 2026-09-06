@@ -2,6 +2,7 @@
 
 import * as React from 'react';
 import { useParams, useRouter } from 'next/navigation';
+import QRCode from 'qrcode';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { batchesApi, getErrorMessage } from '@/lib/api';
 import { useCurrentUser } from '@/stores/authStore';
@@ -91,6 +92,34 @@ export default function WasteBatchDetailPage() {
     queryFn: () => batchesApi.get(id),
     enabled: Boolean(id),
   });
+
+  const [qrDataUrl, setQrDataUrl] = React.useState<string | null>(null);
+
+  React.useEffect(() => {
+    let isMounted = true;
+    if (batch?.qrCode?.codeValue) {
+      QRCode.toDataURL(batch.qrCode.codeValue, {
+        errorCorrectionLevel: 'M',
+        margin: 1,
+        width: 250,
+        color: {
+          dark: '#000000',
+          light: '#FFFFFF',
+        },
+      })
+        .then((url) => {
+          if (isMounted) setQrDataUrl(url);
+        })
+        .catch((err) => {
+          console.error('Failed to generate detail QR code', err);
+        });
+    } else {
+      setQrDataUrl(null);
+    }
+    return () => {
+      isMounted = false;
+    };
+  }, [batch?.qrCode?.codeValue]);
 
   // 2. Fetch Custody History
   const {
@@ -551,8 +580,18 @@ export default function WasteBatchDetailPage() {
             <CardContent className="space-y-4 text-center">
               {batch.qrCode ? (
                 <div className="space-y-3">
-                  <div className="p-4 bg-neutral-50 border border-neutral-200 rounded-xl inline-block">
-                    <QrCode className="w-24 h-24 text-neutral-900 mx-auto" />
+                  <div className="p-3 bg-white border border-neutral-200 rounded-xl inline-block shadow-2xs">
+                    {qrDataUrl ? (
+                      <img
+                        src={qrDataUrl}
+                        alt={`QR code for ${batch.wasteId}`}
+                        className="w-32 h-32 mx-auto object-contain block"
+                      />
+                    ) : (
+                      <div className="w-32 h-32 flex items-center justify-center text-neutral-400 text-xs font-mono">
+                        Generating...
+                      </div>
+                    )}
                   </div>
                   <div className="space-y-0.5">
                     <span className="text-[10px] text-neutral-400 font-bold uppercase block">

@@ -30,10 +30,7 @@ const createUserSchema = z.object({
   facilityId: z.string().optional(),
   password: z
     .string()
-    .optional()
-    .refine((val) => !val || val.length >= 6, {
-      message: 'Password must be at least 6 characters if specified',
-    }),
+    .min(8, 'Password must be at least 8 characters long'),
 });
 
 type CreateUserFormData = z.infer<typeof createUserSchema>;
@@ -104,7 +101,7 @@ export const CreateUserDialog: React.FC<CreateUserDialogProps> = ({
         email: data.email.trim().toLowerCase(),
         role: data.role,
         phone: data.phone ? data.phone.trim() : undefined,
-        password: data.password && data.password.trim().length > 0 ? data.password.trim() : undefined,
+        password: data.password.trim(),
         facilityId: isHospitalAdmin ? user?.facilityId || undefined : (data.facilityId || undefined),
       });
     },
@@ -239,21 +236,18 @@ export const CreateUserDialog: React.FC<CreateUserDialogProps> = ({
           </div>
         )}
 
-        {/* Password (Optional) */}
+        {/* Password (Required) */}
         <div>
           <label className="block text-xs font-semibold text-neutral-700 uppercase tracking-wider mb-1">
-            Initial Password (Optional)
+            Initial Temporary Password <span className="text-status-danger">*</span>
           </label>
           <Input
             {...register('password')}
             type="password"
-            placeholder="Leave blank to use default 'ChangeMe@123'"
+            placeholder="Min. 8 characters (e.g. SecurePass#2026)"
             aria-invalid={!!errors.password}
             className={errors.password ? 'border-status-danger' : ''}
           />
-          <p className="text-[11px] text-neutral-500 mt-1">
-            If left blank, user can sign in with initial password <code className="bg-neutral-100 px-1 rounded text-neutral-700 font-mono">ChangeMe@123</code>.
-          </p>
           {errors.password && (
             <p className="text-[11px] text-status-danger mt-1">{errors.password.message}</p>
           )}

@@ -21,7 +21,6 @@ import {
 import {
   QrCode,
   Scan,
-  Camera,
   CheckCircle2,
   ShieldCheck,
   Flame,
@@ -31,6 +30,7 @@ import {
 import Link from 'next/link';
 import { ScanResponse } from '@/types/api';
 import { CustodyEventType } from '@/types/models';
+import { QRScanner } from '@/components/shared/QRScanner';
 
 export default function UniversalScannerPage() {
   const queryClient = useQueryClient();
@@ -45,6 +45,7 @@ export default function UniversalScannerPage() {
   // Treatment dialog triggers
   const [arrivalDialogBatch, setArrivalDialogBatch] = React.useState<ArrivalBatchItem | null>(null);
   const [treatmentDialogBatch, setTreatmentDialogBatch] = React.useState<TreatmentBatchItem | null>(null);
+  const resultCardRef = React.useRef<HTMLDivElement>(null);
 
   // Scan mutation: POST /api/scan
   const scanMutation = useMutation({
@@ -53,6 +54,9 @@ export default function UniversalScannerPage() {
       setScanResult(data);
       setActionSuccessMsg(null);
       setActionErrorMsg(null);
+      setTimeout(() => {
+        resultCardRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }, 100);
     },
     onError: (err) => {
       setActionErrorMsg(getErrorMessage(err));
@@ -124,45 +128,31 @@ export default function UniversalScannerPage() {
           </Alert>
         )}
 
-        {/* Camera Viewport Placeholder */}
-        <div className="rounded-2xl border-2 border-dashed border-neutral-300 bg-neutral-900 text-white p-8 flex flex-col items-center justify-center text-center gap-4 relative overflow-hidden min-h-[260px] shadow-xs">
-          <div className="relative">
-            <div className="w-16 h-16 rounded-2xl bg-neutral-800 border border-neutral-700 flex items-center justify-center text-primary">
-              <Camera className="w-8 h-8" />
-            </div>
-            <span className="absolute -top-1 -right-1 flex h-3 w-3">
-              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
-              <span className="relative inline-flex rounded-full h-3 w-3 bg-emerald-500" />
-            </span>
-          </div>
-
-          <div className="space-y-1 max-w-xs">
-            <p className="text-sm font-semibold text-white">
-              Optical Camera Ready
-            </p>
-            <p className="text-xs text-neutral-400">
-              Center the thermal label QR code inside the target frame.
-            </p>
-          </div>
-
-          <Button
-            variant="secondary"
-            size="sm"
-            className="text-xs gap-1.5 bg-neutral-800 border-neutral-700 text-neutral-200 hover:bg-neutral-700 hover:text-white"
-            onClick={() => {
-              setManualCode('BIOTRACK:WASTE-1001:TEST');
-            }}
-          >
-            <QrCode className="w-3.5 h-3.5" />
-            <span>Fill Sample Code</span>
-          </Button>
-        </div>
+        {/* Live Optical QR Camera Scanner */}
+        <QRScanner
+          onScan={(decodedText) => {
+            const trimmed = decodedText.trim();
+            setManualCode(trimmed);
+            scanMutation.mutate(trimmed);
+          }}
+          disabled={scanMutation.isPending}
+        />
 
         {/* Manual Barcode Entry Form */}
         <div className="rounded-xl border border-neutral-200 bg-white p-5 shadow-2xs space-y-3">
-          <h3 className="text-xs font-bold text-neutral-700 uppercase tracking-wider">
-            Manual Barcode Entry (Field Fallback)
-          </h3>
+          <div className="flex items-center justify-between">
+            <h3 className="text-xs font-bold text-neutral-700 uppercase tracking-wider">
+              Manual Barcode Entry (Field Fallback)
+            </h3>
+            <button
+              type="button"
+              onClick={() => setManualCode('BIOTRACK:WASTE-1001:TEST')}
+              className="text-[11px] font-semibold text-primary hover:underline inline-flex items-center gap-1 cursor-pointer"
+            >
+              <QrCode className="w-3 h-3" />
+              <span>Fill Sample Code</span>
+            </button>
+          </div>
           <form onSubmit={handleManualScan} className="flex gap-2">
             <Input
               placeholder="e.g. BIOTRACK:WASTE-1001:A1B2C3D4"
@@ -183,7 +173,7 @@ export default function UniversalScannerPage() {
 
         {/* Scan Result Resolution Card & Contextual Actions */}
         {scanResult && scanResult.batch && (
-          <div className="rounded-xl border border-neutral-200 bg-white p-6 shadow-md space-y-4 animate-in fade-in zoom-in-95 duration-150">
+          <div ref={resultCardRef} className="rounded-xl border border-neutral-200 bg-white p-6 shadow-md space-y-4 animate-in fade-in zoom-in-95 duration-150">
             <div className="flex items-start justify-between">
               <div>
                 <span className="text-[10px] font-bold text-neutral-400 uppercase tracking-wider block">

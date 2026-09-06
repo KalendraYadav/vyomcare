@@ -380,6 +380,36 @@
     justify-content: center;
   }
 
+  /* html5-qrcode video viewport styling (PWA & Mobile Android Fix) */
+  #biotrack-qr-reader-viewport {
+    width: 100% !important;
+    border: none !important;
+    position: relative !important;
+    overflow: hidden !important;
+    background-color: #000000 !important;
+  }
+
+  #biotrack-qr-reader-viewport video {
+    width: 100% !important;
+    height: 100% !important;
+    min-height: 280px !important;
+    max-height: 420px !important;
+    object-fit: cover !important;
+    display: block !important;
+    visibility: visible !important;
+    opacity: 1 !important;
+    border-radius: 0.75rem !important;
+  }
+
+  #biotrack-qr-reader-viewport canvas {
+    border-radius: 0.75rem !important;
+  }
+
+  #biotrack-qr-reader-viewport img[alt="Info icon"],
+  #biotrack-qr-reader-viewport #biotrack-qr-reader-viewport__dashboard_section_csr {
+    display: none !important;
+  }
+
   /* Alert row new-alert highlight animation */
   .alert-new-highlight {
     animation: highlight-fade 1.5s ease-out forwards;

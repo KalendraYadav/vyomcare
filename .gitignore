@@ -4,8 +4,11 @@
 .env
 .env.local
 .env.*.local
+.env.production
+.env.hackathon
 # Allow the example templates to be committed
 !.env.example
+!.env.production.example
 
 # ─── Dependencies ────────────────────────────────────────────────────────────
 node_modules/
