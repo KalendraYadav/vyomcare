@@ -7,12 +7,17 @@ import {
 } from '@nestjs/websockets';
 import { Server, Socket } from 'socket.io';
 
+const rawWsCorsOrigin = process.env.CORS_ORIGIN || 'http://localhost:3000';
+const wsCorsOrigin = rawWsCorsOrigin.includes(',')
+  ? rawWsCorsOrigin.split(',').map((o) => o.trim())
+  : rawWsCorsOrigin;
+
 // CORS origin is driven by environment — same as the HTTP API CORS config.
 // Development: http://localhost:3000 (CORS_ORIGIN in .env)
 // Production:  set CORS_ORIGIN to your production frontend domain.
 @WebSocketGateway({
   cors: {
-    origin: process.env.CORS_ORIGIN || 'http://localhost:3000',
+    origin: wsCorsOrigin,
     credentials: true,
   },
   namespace: '/notifications',
