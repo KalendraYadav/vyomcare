@@ -1,19 +1,34 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Optional } from '@nestjs/common';
 import { PrismaService } from '../../common/prisma/prisma.service';
+import { AuditLogService } from '../audit-log/audit-log.service';
 
 @Injectable()
 export class FacilitiesService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    @Optional() private auditLog?: AuditLogService,
+  ) {}
 
   async register(dto: any) {
     return this.prisma.facility.create({ data: { ...dto, status: 'PENDING' } });
   }
 
   async approve(id: string, action: 'APPROVED' | 'SUSPENDED') {
-    return this.prisma.facility.update({
+    const updated = await this.prisma.facility.update({
       where: { id },
       data: { status: action },
     });
+
+    if (this.auditLog) {
+      await this.auditLog.log({
+        action: 'FACILITY_STATUS_UPDATED',
+        entityType: 'Facility',
+        entityId: id,
+        metadata: { newStatus: action },
+      });
+    }
+
+    return updated;
   }
 
   async findAll(query: any) {
@@ -31,6 +46,17 @@ export class FacilitiesService {
   }
 
   async update(id: string, dto: any) {
-    return this.prisma.facility.update({ where: { id }, data: dto });
+    const updated = await this.prisma.facility.update({ where: { id }, data: dto });
+
+    if (this.auditLog) {
+      await this.auditLog.log({
+        action: 'FACILITY_UPDATED',
+        entityType: 'Facility',
+        entityId: id,
+        metadata: dto,
+      });
+    }
+
+    return updated;
   }
 }

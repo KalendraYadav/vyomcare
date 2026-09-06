@@ -4,9 +4,11 @@ import {
   ForbiddenException,
   BadRequestException,
   ConflictException,
+  Optional,
 } from '@nestjs/common';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { EmailService } from '../../common/email/email.service';
+import { AuditLogService } from '../audit-log/audit-log.service';
 import { UserRole } from '@prisma/client';
 import * as bcrypt from 'bcryptjs';
 import * as crypto from 'crypto';
@@ -18,6 +20,7 @@ export class UsersService {
   constructor(
     private prisma: PrismaService,
     private emailService: EmailService,
+    @Optional() private auditLog?: AuditLogService,
   ) {}
 
   async create(
@@ -125,6 +128,20 @@ export class UsersService {
       appBaseUrl,
     });
 
+    if (this.auditLog) {
+      await this.auditLog.log({
+        actorUserId: actor.userId,
+        action: 'USER_PROVISIONED',
+        entityType: 'User',
+        entityId: newUser.id,
+        metadata: {
+          role: newUser.role,
+          email: newUser.email,
+          facilityId: newUser.facilityId,
+        },
+      });
+    }
+
     return {
       ...newUser,
       verificationDispatched: dispatchResult.success,
@@ -189,7 +206,7 @@ export class UsersService {
       }
     }
 
-    return this.prisma.user.update({
+    const updated = await this.prisma.user.update({
       where: { id },
       data: { status },
       select: {
@@ -201,6 +218,22 @@ export class UsersService {
         emailVerified: true,
       },
     });
+
+    if (this.auditLog) {
+      await this.auditLog.log({
+        actorUserId: actor.userId,
+        action: 'USER_STATUS_UPDATED',
+        entityType: 'User',
+        entityId: id,
+        metadata: {
+          previousStatus: targetUser.status,
+          newStatus: status,
+          targetRole: targetUser.role,
+        },
+      });
+    }
+
+    return updated;
   }
 
   async findMe(userId: string) {
