@@ -4,6 +4,10 @@ PHASE 10 IMPLEMENTATION COMPLETE. EXTERNAL PRODUCTION CONFIGURATION REMAINS.
 
 cloudflared tunnel --url http://localhost:3000
 
+#use this format to connect the phone
+http://192.168.1.20:3001/api
+
+
 
 #TO START THE SERVER:-
 cd backend

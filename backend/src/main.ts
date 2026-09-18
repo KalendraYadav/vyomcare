@@ -78,8 +78,9 @@ async function bootstrap() {
   app.setGlobalPrefix('api');
 
   const port = process.env.PORT || 3001;
-  await app.listen(port);
-  console.log(`🚀 BioTrack API running on port ${port} (/api)`);
+  const host = process.env.HOST || '0.0.0.0';
+  await app.listen(port, host);
+  console.log(`🚀 BioTrack API running on ${host}:${port} (/api)`);
   console.log(`   NODE_ENV:    ${process.env.NODE_ENV}`);
   console.log(`   CORS origin: ${rawCorsOrigin}`);
 }

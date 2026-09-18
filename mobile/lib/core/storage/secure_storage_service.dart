@@ -49,6 +49,11 @@ class SecureStorageService {
     return prefs.getString(_customApiUrlKey);
   }
 
+  Future<void> removeCustomApiUrl() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove(_customApiUrlKey);
+  }
+
   Future<void> clearAll() async {
     await _secureStorage.deleteAll();
     final prefs = await SharedPreferences.getInstance();

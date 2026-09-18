@@ -15,6 +15,11 @@ final apiClientProvider = Provider<ApiClient>((ref) {
   return ApiClient(storageService: storage);
 });
 
+final serverUrlProvider = StateProvider<String>((ref) {
+  final client = ref.watch(apiClientProvider);
+  return client.currentBaseUrl;
+});
+
 // Authentication State
 class AuthState {
   final bool isLoading;
@@ -45,14 +50,17 @@ class AuthState {
 class AuthNotifier extends StateNotifier<AuthState> {
   final ApiClient _apiClient;
   final SecureStorageService _storageService;
+  final Ref _ref;
 
-  AuthNotifier(this._apiClient, this._storageService) : super(const AuthState(isLoading: true)) {
+  AuthNotifier(this._apiClient, this._storageService, this._ref) : super(const AuthState(isLoading: true)) {
     checkInitialAuth();
   }
 
   Future<void> checkInitialAuth() async {
     try {
       await _apiClient.initBaseUrl();
+      _ref.read(serverUrlProvider.notifier).state = _apiClient.currentBaseUrl;
+
       final token = await _storageService.getAccessToken();
       final userJson = await _storageService.getUserJson();
 
@@ -123,5 +131,5 @@ class AuthNotifier extends StateNotifier<AuthState> {
 final authStateProvider = StateNotifierProvider<AuthNotifier, AuthState>((ref) {
   final apiClient = ref.watch(apiClientProvider);
   final storage = ref.watch(secureStorageProvider);
-  return AuthNotifier(apiClient, storage);
+  return AuthNotifier(apiClient, storage, ref);
 });

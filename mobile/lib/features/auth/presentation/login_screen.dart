@@ -14,11 +14,24 @@ class LoginScreen extends ConsumerStatefulWidget {
 
 class _LoginScreenState extends ConsumerState<LoginScreen> {
   final _formKey = GlobalKey<FormState>();
-  final _emailController = TextEditingController(text: 'hospital.admin@vyomcare.in');
-  final _passwordController = TextEditingController(text: 'Password123!');
+  final _emailController = TextEditingController(text: 'admin@citygeneral.in');
+  final _passwordController = TextEditingController(text: 'BioTrack@2026');
   final _customUrlController = TextEditingController();
   bool _obscurePassword = true;
   bool _showDevSettings = false;
+  bool _isTestingConnection = false;
+  String? _testResultText;
+  bool? _testResultSuccess;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && _customUrlController.text.isEmpty) {
+        _customUrlController.text = ref.read(serverUrlProvider);
+      }
+    });
+  }
 
   @override
   void dispose() {
@@ -43,13 +56,98 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
   void _quickFillRole(String email, String roleTitle) {
     setState(() {
       _emailController.text = email;
-      _passwordController.text = 'Password123!';
+      _passwordController.text = 'BioTrack@2026';
     });
+  }
+
+  Future<void> _handleTestConnection() async {
+    setState(() {
+      _isTestingConnection = true;
+      _testResultText = null;
+      _testResultSuccess = null;
+    });
+
+    final targetInput = _customUrlController.text.trim();
+    final result = await ref.read(apiClientProvider).checkHealth(
+      testUrl: targetInput.isNotEmpty ? targetInput : null,
+    );
+
+    if (!mounted) return;
+
+    setState(() {
+      _isTestingConnection = false;
+      _testResultSuccess = result['success'] == true;
+      if (result['success'] == true) {
+        _testResultText = '✓ Connected (${result['latencyMs']}ms): Reachable at ${result['target']}';
+      } else {
+        _testResultText = '✗ ${result['error']}';
+      }
+    });
+  }
+
+  Future<void> _handleApplyCustomUrl() async {
+    final rawUrl = _customUrlController.text.trim();
+    if (rawUrl.isEmpty) return;
+
+    debugPrint('[API CONFIG] Apply pressed');
+    debugPrint('[API CONFIG] Raw URL: $rawUrl');
+
+    try {
+      final normalized = AppConfig.normalizeApiUrl(rawUrl);
+      debugPrint('[API CONFIG] Normalized URL: $normalized');
+      debugPrint('[API CONFIG] Saving URL...');
+      await ref.read(secureStorageProvider).saveCustomApiUrl(normalized);
+      debugPrint('[API CONFIG] URL saved');
+      debugPrint('[API CONFIG] Updating ApiClient...');
+      ref.read(apiClientProvider).updateBaseUrl(normalized);
+      ref.read(serverUrlProvider.notifier).state = normalized;
+      debugPrint('[API CONFIG] ApiClient updated');
+      _customUrlController.text = normalized;
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Applied & saved API URL:\n$normalized'),
+          backgroundColor: AppColors.success,
+          duration: const Duration(seconds: 2),
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Invalid URL format: $e'),
+          backgroundColor: AppColors.danger,
+        ),
+      );
+    }
+  }
+
+  Future<void> _handleResetUrl() async {
+    debugPrint('[API CONFIG] Reset to default pressed');
+    await ref.read(secureStorageProvider).removeCustomApiUrl();
+    ref.read(apiClientProvider).resetBaseUrl();
+    final defaultUrl = AppConfig.defaultBaseUrl;
+    ref.read(serverUrlProvider.notifier).state = defaultUrl;
+    _customUrlController.text = defaultUrl;
+
+    if (!mounted) return;
+    setState(() {
+      _testResultText = null;
+      _testResultSuccess = null;
+    });
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('Reset to default API URL:\n$defaultUrl'),
+        duration: const Duration(seconds: 2),
+      ),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
     final authState = ref.watch(authStateProvider);
+    final currentBaseUrl = ref.watch(serverUrlProvider);
 
     return Scaffold(
       backgroundColor: AppColors.background,
@@ -71,7 +169,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                       borderRadius: BorderRadius.circular(AppRadius.lg),
                       boxShadow: [
                         BoxShadow(
-                          color: AppColors.primary.withOpacity(0.3),
+                          color: AppColors.primary.withValues(alpha: 0.3),
                           blurRadius: 12,
                           offset: const Offset(0, 4),
                         ),
@@ -168,7 +266,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                             controller: _emailController,
                             keyboardType: TextInputType.emailAddress,
                             decoration: const InputDecoration(
-                              hintText: 'user@vyomcare.in',
+                              hintText: 'admin@citygeneral.in',
                               prefixIcon: Icon(Icons.email_outlined, size: 20),
                             ),
                             validator: (v) =>
@@ -237,7 +335,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         const Text(
-                          'DEMO ACCOUNTS (ROLE PRESETS)',
+                          'DEMO ACCOUNTS (REAL SEEDED ROLES)',
                           style: TextStyle(
                             fontSize: 10,
                             fontWeight: FontWeight.bold,
@@ -252,23 +350,27 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                           children: [
                             ActionChip(
                               label: const Text('Hospital Admin', style: TextStyle(fontSize: 11)),
-                              onPressed: () => _quickFillRole('hospital.admin@vyomcare.in', 'Hospital Admin'),
+                              onPressed: () => _quickFillRole('admin@citygeneral.in', 'Hospital Admin'),
+                            ),
+                            ActionChip(
+                              label: const Text('Hospital Staff', style: TextStyle(fontSize: 11)),
+                              onPressed: () => _quickFillRole('staff@citygeneral.in', 'Hospital Staff'),
                             ),
                             ActionChip(
                               label: const Text('Collection Staff', style: TextStyle(fontSize: 11)),
-                              onPressed: () => _quickFillRole('collection@vyomcare.in', 'Collection'),
+                              onPressed: () => _quickFillRole('collection@biotrack.in', 'Collection'),
                             ),
                             ActionChip(
                               label: const Text('Driver Mode', style: TextStyle(fontSize: 11)),
-                              onPressed: () => _quickFillRole('driver@vyomcare.in', 'Driver'),
+                              onPressed: () => _quickFillRole('transport@biotrack.in', 'Driver'),
                             ),
                             ActionChip(
                               label: const Text('CBWTF Treatment', style: TextStyle(fontSize: 11)),
-                              onPressed: () => _quickFillRole('treatment@vyomcare.in', 'Treatment'),
+                              onPressed: () => _quickFillRole('facility@greendispose.in', 'Treatment'),
                             ),
                             ActionChip(
                               label: const Text('State Pollution Board', style: TextStyle(fontSize: 11)),
-                              onPressed: () => _quickFillRole('govt@vyomcare.in', 'Government'),
+                              onPressed: () => _quickFillRole('gov@mpcb.gov.in', 'Government'),
                             ),
                           ],
                         ),
@@ -282,7 +384,14 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                 // Server Configuration Toggle for Physical Devices
                 Center(
                   child: TextButton.icon(
-                    onPressed: () => setState(() => _showDevSettings = !_showDevSettings),
+                    onPressed: () {
+                      setState(() {
+                        _showDevSettings = !_showDevSettings;
+                        if (_showDevSettings && _customUrlController.text.isEmpty) {
+                          _customUrlController.text = currentBaseUrl;
+                        }
+                      });
+                    },
                     icon: const Icon(Icons.settings_outlined, size: 16),
                     label: Text(
                       _showDevSettings ? 'Hide Network Config' : 'Configure Server API URL',
@@ -299,33 +408,135 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Text(
-                            'Current Base: ${ref.read(apiClientProvider).currentBaseUrl}',
-                            style: const TextStyle(fontSize: 11, fontFamily: 'monospace'),
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              const Text(
+                                'SERVER CONNECTION',
+                                style: TextStyle(
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.bold,
+                                  color: AppColors.textMuted,
+                                  letterSpacing: 0.5,
+                                ),
+                              ),
+                              TextButton(
+                                style: TextButton.styleFrom(
+                                  padding: EdgeInsets.zero,
+                                  minimumSize: const Size(50, 24),
+                                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                                ),
+                                onPressed: _handleResetUrl,
+                                child: const Text('Reset to Default', style: TextStyle(fontSize: 11)),
+                              ),
+                            ],
                           ),
-                          const SizedBox(height: 8),
-                          TextFormField(
-                            controller: _customUrlController,
-                            decoration: const InputDecoration(
-                              hintText: 'e.g. http://192.168.1.100:3001/api',
-                              labelText: 'Custom API Endpoint',
+                          const SizedBox(height: 4),
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                            decoration: BoxDecoration(
+                              color: AppColors.background,
+                              borderRadius: BorderRadius.circular(AppRadius.sm),
+                              border: Border.all(color: AppColors.border),
+                            ),
+                            child: Row(
+                              children: [
+                                const Icon(Icons.link, size: 14, color: AppColors.textMuted),
+                                const SizedBox(width: 6),
+                                Expanded(
+                                  child: Text(
+                                    currentBaseUrl,
+                                    style: const TextStyle(fontSize: 11, fontFamily: 'monospace'),
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ),
+                              ],
                             ),
                           ),
-                          const SizedBox(height: 8),
-                          OutlinedButton(
-                            onPressed: () async {
-                              final url = _customUrlController.text.trim();
-                              if (url.isNotEmpty) {
-                                await ref.read(secureStorageProvider).saveCustomApiUrl(url);
-                                ref.read(apiClientProvider).updateBaseUrl(url);
-                                if (mounted) {
-                                  ScaffoldMessenger.of(context).showSnackBar(
-                                    SnackBar(content: Text('API URL updated to $url')),
-                                  );
-                                }
-                              }
-                            },
-                            child: const Text('Apply Custom URL'),
+                          const SizedBox(height: 10),
+                          TextFormField(
+                            controller: _customUrlController,
+                            style: const TextStyle(fontSize: 13, fontFamily: 'monospace'),
+                            decoration: const InputDecoration(
+                              hintText: 'e.g. http://192.168.1.20:3001/api',
+                              labelText: 'Custom API Endpoint',
+                              helperText: 'Accepts LAN IP with port :3001 (e.g. 192.168.1.20:3001)',
+                              helperMaxLines: 2,
+                              isDense: true,
+                            ),
+                          ),
+                          const SizedBox(height: 10),
+
+                          // Diagnostic test feedback
+                          if (_testResultText != null) ...[
+                            Container(
+                              padding: const EdgeInsets.all(8),
+                              decoration: BoxDecoration(
+                                color: _testResultSuccess == true
+                                    ? AppColors.successBg
+                                    : AppColors.dangerBg,
+                                borderRadius: BorderRadius.circular(AppRadius.sm),
+                                border: Border.all(
+                                  color: _testResultSuccess == true
+                                      ? AppColors.successBorder
+                                      : AppColors.dangerBorder,
+                                ),
+                              ),
+                              child: Row(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Icon(
+                                    _testResultSuccess == true
+                                        ? Icons.check_circle_outline
+                                        : Icons.error_outline,
+                                    size: 16,
+                                    color: _testResultSuccess == true
+                                        ? AppColors.success
+                                        : AppColors.danger,
+                                  ),
+                                  const SizedBox(width: 6),
+                                  Expanded(
+                                    child: Text(
+                                      _testResultText!,
+                                      style: TextStyle(
+                                        fontSize: 11,
+                                        fontWeight: FontWeight.w500,
+                                        color: _testResultSuccess == true
+                                            ? AppColors.success
+                                            : AppColors.danger,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            const SizedBox(height: 10),
+                          ],
+
+                          Row(
+                            children: [
+                              Expanded(
+                                child: OutlinedButton.icon(
+                                  icon: _isTestingConnection
+                                      ? const SizedBox(
+                                          width: 12,
+                                          height: 12,
+                                          child: CircularProgressIndicator(strokeWidth: 2),
+                                        )
+                                      : const Icon(Icons.network_check_outlined, size: 14),
+                                  label: const Text('Test Connection', style: TextStyle(fontSize: 11)),
+                                  onPressed: _isTestingConnection ? null : _handleTestConnection,
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: ElevatedButton.icon(
+                                  icon: const Icon(Icons.check, size: 14),
+                                  label: const Text('Apply Custom URL', style: TextStyle(fontSize: 11)),
+                                  onPressed: _handleApplyCustomUrl,
+                                ),
+                              ),
+                            ],
                           ),
                         ],
                       ),

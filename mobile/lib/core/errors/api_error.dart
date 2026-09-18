@@ -8,6 +8,10 @@ enum ApiErrorCode {
   rateLimited,
   serverError,
   networkError,
+  connectionRefused,
+  unreachable,
+  cleartextBlocked,
+  malformedUrl,
   timeout,
   unknown,
 }
@@ -60,6 +64,20 @@ class ApiError implements Exception {
     return ApiError(status: status, message: message, code: code, details: details);
   }
 
+  factory ApiError.network(
+    String message, {
+    ApiErrorCode code = ApiErrorCode.networkError,
+    int status = 0,
+    dynamic details,
+  }) {
+    return ApiError(
+      status: status,
+      message: message,
+      code: code,
+      details: details,
+    );
+  }
+
   String get userFriendlyMessage {
     switch (code) {
       case ApiErrorCode.unauthorized:
@@ -77,10 +95,30 @@ class ApiError implements Exception {
         return 'Too many requests. Please wait a moment before trying again.';
       case ApiErrorCode.serverError:
         return 'Internal server error. Please try again or contact support.';
-      case ApiErrorCode.networkError:
-        return 'Cannot connect to VyomCare server. Check network connection.';
+      case ApiErrorCode.connectionRefused:
+        return message.isNotEmpty
+            ? message
+            : 'Connection refused. Ensure backend is running and port is correct.';
+      case ApiErrorCode.unreachable:
+        return message.isNotEmpty
+            ? message
+            : 'Host unreachable. Verify phone and laptop are on the same Wi-Fi.';
+      case ApiErrorCode.cleartextBlocked:
+        return message.isNotEmpty
+            ? message
+            : 'Cleartext HTTP communication blocked by Android security policy.';
+      case ApiErrorCode.malformedUrl:
+        return message.isNotEmpty
+            ? message
+            : 'Malformed URL. Please check IP address, port, and /api prefix.';
       case ApiErrorCode.timeout:
-        return 'Request timed out. Please try again.';
+        return message.isNotEmpty
+            ? message
+            : 'Connection timed out. Check laptop IP, Wi-Fi network, and Windows Firewall.';
+      case ApiErrorCode.networkError:
+        return message.isNotEmpty
+            ? message
+            : 'Cannot connect to VyomCare server. Check network connection.';
       case ApiErrorCode.unknown:
         return message.isNotEmpty ? message : 'An unexpected error occurred.';
     }
