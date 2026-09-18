@@ -11,7 +11,7 @@
 
 import { create } from 'zustand';
 import { AuthUser, UserRole } from '@/types/models';
-import { setAccessToken, clearAccessToken } from '@/lib/api';
+import { setAccessToken, getAccessToken, clearAccessToken } from '@/lib/api';
 
 interface AuthState {
   user: AuthUser | null;
@@ -34,10 +34,13 @@ export const useAuthStore = create<AuthState>((set) => ({
   isLoading: false,
 
   setAuth: (user, accessToken) => {
-    setAccessToken(accessToken);
+    const effectiveToken = accessToken || getAccessToken();
+    if (effectiveToken) {
+      setAccessToken(effectiveToken);
+    }
     set({
       user,
-      accessToken,
+      accessToken: effectiveToken,
       isAuthenticated: true,
       isLoading: false,
     });

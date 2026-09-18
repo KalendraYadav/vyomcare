@@ -37,15 +37,32 @@ async function bootstrap() {
   app.use(helmet());
   app.use(cookieParser());
 
-  // CORS — uses CORS_ORIGIN env var (falls back to localhost for convenience)
-  // Development: http://localhost:3000
-  // Production:  set CORS_ORIGIN to your production frontend URL (or comma-separated URLs)
+  // CORS — allows localhost, 127.0.0.1, and dynamic Cloudflare Quick Tunnel origins
   const rawCorsOrigin = process.env.CORS_ORIGIN || 'http://localhost:3000';
-  const corsOrigin = rawCorsOrigin.includes(',')
-    ? rawCorsOrigin.split(',').map((o) => o.trim())
-    : rawCorsOrigin;
+  const configuredOrigins = rawCorsOrigin.split(',').map((o) => o.trim());
   app.enableCors({
-    origin: corsOrigin,
+    origin: (origin, callback) => {
+      // Allow requests with no origin (e.g. server rewrites, mobile apps, curl)
+      if (!origin) return callback(null, true);
+
+      if (configuredOrigins.includes(origin)) return callback(null, true);
+
+      try {
+        const parsed = new URL(origin);
+        if (
+          parsed.hostname === 'localhost' ||
+          parsed.hostname === '127.0.0.1' ||
+          parsed.hostname === '[::1]' ||
+          parsed.hostname.endsWith('.trycloudflare.com')
+        ) {
+          return callback(null, true);
+        }
+      } catch {
+        // invalid URL
+      }
+
+      return callback(null, false);
+    },
     credentials: true,
   });
 
@@ -64,7 +81,7 @@ async function bootstrap() {
   await app.listen(port);
   console.log(`🚀 BioTrack API running on port ${port} (/api)`);
   console.log(`   NODE_ENV:    ${process.env.NODE_ENV}`);
-  console.log(`   CORS origin: ${corsOrigin}`);
+  console.log(`   CORS origin: ${rawCorsOrigin}`);
 }
 
 bootstrap();

@@ -10,7 +10,7 @@ const SOCKET_URL =
   process.env.NEXT_PUBLIC_SOCKET_URL ||
   (process.env.NEXT_PUBLIC_WS_URL ? `${process.env.NEXT_PUBLIC_WS_URL}/notifications` : undefined) ||
   (typeof window !== 'undefined'
-    ? `${window.location.protocol}//${window.location.hostname}:3001/notifications`
+    ? `${window.location.origin}/notifications`
     : 'http://localhost:3001/notifications');
 
 let socketInstance: Socket | null = null;

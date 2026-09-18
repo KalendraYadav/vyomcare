@@ -3,45 +3,44 @@
 import * as React from 'react';
 import { useRouter } from 'next/navigation';
 import { useQuery } from '@tanstack/react-query';
-import { batchesApi, categoriesApi, getErrorMessage } from '@/lib/api';
+import { batchesApi, categoriesApi } from '@/lib/api';
 import { useCurrentUser } from '@/stores/authStore';
 import { CategoryBadge } from '@/components/shared/CategoryBadge';
-import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Skeleton } from '@/components/ui/skeleton';
+import { SkeletonTable } from '@/components/ui/skeleton';
 import { EmptyState } from '@/components/ui/empty-state';
 import { ErrorState } from '@/components/ui/error-state';
-import {
-  Table,
-  TableHeader,
-  TableBody,
-  TableHead,
-  TableRow,
-  TableCell,
-} from '@/components/ui/table';
 import {
   Plus,
   Search,
   Filter,
   Printer,
-  Eye,
   ChevronLeft,
   ChevronRight,
   RefreshCw,
+  Package,
+  ShieldCheck,
+  Building2,
+  Calendar,
+  Clock,
+  Truck,
+  CheckCircle2,
+  AlertTriangle,
+  FileText,
+  Radio,
+  ExternalLink,
 } from 'lucide-react';
 import Link from 'next/link';
 import { WasteBatchStatus } from '@/types/models';
 
 const STATUS_FILTERS: Array<{ label: string; value: WasteBatchStatus | 'ALL' }> = [
-  { label: 'All Batches', value: 'ALL' },
-  { label: 'Registered', value: 'REGISTERED' },
-  { label: 'QR Assigned', value: 'QR_ASSIGNED' },
-  { label: 'Collected', value: 'COLLECTED' },
-  { label: 'In Transit', value: 'IN_TRANSIT' },
-  { label: 'Received', value: 'RECEIVED' },
-  { label: 'Treated', value: 'TREATED' },
-  { label: 'Closed', value: 'VERIFIED_CLOSED' },
+  { label: 'ALL CONSIGNMENTS', value: 'ALL' },
+  { label: 'REGISTERED', value: 'REGISTERED' },
+  { label: 'QR ASSIGNED', value: 'QR_ASSIGNED' },
+  { label: 'COLLECTED', value: 'COLLECTED' },
+  { label: 'IN TRANSIT', value: 'IN_TRANSIT' },
+  { label: 'RECEIVED', value: 'RECEIVED' },
+  { label: 'TREATED', value: 'TREATED' },
+  { label: 'CLOSED', value: 'VERIFIED_CLOSED' },
 ];
 
 export default function WasteBatchesDirectoryPage() {
@@ -106,280 +105,309 @@ export default function WasteBatchesDirectoryPage() {
 
   const canCreateBatch = isHospitalRole || isSuperAdmin;
 
+  const getStatusBadge = (status: WasteBatchStatus) => {
+    switch (status) {
+      case 'VERIFIED_CLOSED':
+      case 'TREATED':
+        return (
+          <span className="inline-flex items-center gap-1 text-[10px] font-mono font-bold px-2 py-0.5 rounded bg-emerald-950/80 border border-emerald-500/40 text-emerald-300">
+            <CheckCircle2 className="w-3 h-3 text-emerald-400" />
+            {status.replace(/_/g, ' ')}
+          </span>
+        );
+      case 'COLLECTED':
+      case 'IN_TRANSIT':
+        return (
+          <span className="inline-flex items-center gap-1 text-[10px] font-mono font-bold px-2 py-0.5 rounded bg-blue-950/80 border border-blue-500/40 text-blue-300">
+            <Truck className="w-3 h-3 text-blue-400" />
+            {status.replace(/_/g, ' ')}
+          </span>
+        );
+      case 'VIOLATION':
+        return (
+          <span className="inline-flex items-center gap-1 text-[10px] font-mono font-bold px-2 py-0.5 rounded bg-red-950/80 border border-red-500/60 text-red-300 animate-pulse">
+            <AlertTriangle className="w-3 h-3 text-red-400" />
+            SLA BREACH
+          </span>
+        );
+      case 'REGISTERED':
+      case 'QR_ASSIGNED':
+      default:
+        return (
+          <span className="inline-flex items-center gap-1 text-[10px] font-mono font-bold px-2 py-0.5 rounded bg-amber-950/80 border border-amber-500/40 text-amber-300">
+            <Clock className="w-3 h-3 text-amber-400" />
+            STAGED AT BAY
+          </span>
+        );
+    }
+  };
+
   return (
-    <div className="space-y-6 pb-12">
-      {/* Header & Primary CTA */}
-      <div className="flex flex-wrap items-center justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight text-neutral-900">
-            Biomedical Waste Batches
-          </h1>
-          <p className="text-xs text-neutral-500">
-            Authoritative registry and chain of custody tracking for hazardous healthcare waste.
-          </p>
-        </div>
+    <div className="space-y-6 pb-12 font-mono">
+      {/* 1. APEX MANIFEST AUTHORITY HEADER */}
+      <div className="relative bg-[#0B101B]/95 border border-slate-800 rounded-xl p-5 md:p-6 shadow-2xl overflow-hidden backdrop-blur-md">
+        {/* Tactical Corners */}
+        <div className="absolute top-0 left-0 w-3 h-3 border-t-2 border-l-2 border-cyan-500 pointer-events-none" />
+        <div className="absolute top-0 right-0 w-3 h-3 border-t-2 border-r-2 border-cyan-500 pointer-events-none" />
 
-        <div className="flex items-center gap-2">
-          <Button
-            variant="secondary"
-            size="sm"
-            onClick={() => refetch()}
-            disabled={isFetching}
-            className="text-xs gap-1.5"
-          >
-            <RefreshCw className={`w-3.5 h-3.5 ${isFetching ? 'animate-spin' : ''}`} />
-            <span>Refresh</span>
-          </Button>
+        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+          <div className="space-y-2 font-sans">
+            <div className="flex flex-wrap items-center gap-2 font-mono text-xs">
+              <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded bg-cyan-950/80 border border-cyan-500/40 text-cyan-300 font-bold uppercase">
+                <ShieldCheck className="w-3 h-3 text-cyan-400" />
+                CPCB STATUTORY MANIFEST REGISTRY
+              </span>
+              <span className="text-slate-600">•</span>
+              <span className="text-slate-300 font-bold">
+                {totalItems} Active Form-VI Consignments
+              </span>
+            </div>
+            <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-white">
+              Biomedical Waste Custody Ledger
+            </h1>
+            <p className="text-xs text-slate-400 max-w-3xl leading-relaxed">
+              Statutory national registry recording serialized barcode handshakes, vehicle transit telemetry, and CBWTF destruction certificates.
+            </p>
+          </div>
 
-          {canCreateBatch && (
-            <Button
-              variant="primary"
-              size="sm"
-              onClick={() => router.push('/waste-batches/new')}
-              className="text-xs gap-1.5 font-bold shadow-sm"
+          <div className="flex flex-wrap items-center gap-3 self-start lg:self-center">
+            <button
+              type="button"
+              onClick={() => refetch()}
+              disabled={isFetching}
+              className="flex items-center gap-1.5 text-xs font-bold px-3.5 py-2.5 rounded-lg bg-slate-900 border border-slate-700 text-slate-300 hover:text-white transition-all cursor-pointer shadow"
             >
-              <Plus className="w-4 h-4" />
-              <span>Register New Batch</span>
-            </Button>
-          )}
+              <RefreshCw className={`w-3.5 h-3.5 text-cyan-400 ${isFetching ? 'animate-spin' : ''}`} />
+              <span>SYNC LEDGER</span>
+            </button>
+
+            {canCreateBatch && (
+              <button
+                type="button"
+                onClick={() => router.push('/waste-batches/new')}
+                className="flex items-center gap-2 text-xs font-bold px-4 py-2.5 rounded-lg bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 text-black transition-all shadow-lg hover:shadow-cyan-500/25 cursor-pointer"
+              >
+                <Plus className="w-4 h-4" />
+                <span>ENCODE NEW MANIFEST</span>
+              </button>
+            )}
+          </div>
         </div>
       </div>
 
-      {/* Filter Tabs & Search Bar */}
-      <div className="space-y-3 bg-white p-4 rounded-xl border border-neutral-200 shadow-xs">
-        {/* Status Pills */}
-        <div className="flex items-center gap-1.5 overflow-x-auto pb-1 scrollbar-none">
-          {STATUS_FILTERS.map((tab) => {
-            const isSelected = selectedStatus === tab.value;
-            return (
-              <button
-                key={tab.value}
-                onClick={() => {
-                  setSelectedStatus(tab.value);
-                  setCurrentPage(1);
-                }}
-                className={`px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition-all ${
-                  isSelected
-                    ? 'bg-primary text-white shadow-xs'
-                    : 'bg-neutral-100 text-neutral-600 hover:bg-neutral-200 hover:text-neutral-900'
-                }`}
-              >
-                {tab.label}
-              </button>
-            );
-          })}
-        </div>
-
-        {/* Search & Category Filter */}
-        <div className="grid grid-cols-1 sm:grid-cols-[1fr_220px] gap-3 pt-1">
-          <div className="relative">
-            <Search className="w-4 h-4 absolute left-3 top-3 text-neutral-400 pointer-events-none" />
-            <Input
+      {/* 2. ADVANCED TACTICAL FILTER & SEARCH CONTROLS */}
+      <div className="bg-[#0B101B]/95 border border-slate-800 rounded-xl p-4 shadow-xl space-y-4">
+        <div className="grid grid-cols-1 md:grid-cols-12 gap-3 items-center">
+          {/* Global Search */}
+          <div className="md:col-span-6 relative">
+            <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-500">
+              <Search className="w-4 h-4" />
+            </div>
+            <input
+              type="text"
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
-              placeholder="Search by Waste ID (e.g. BMW-2026), Ward, or Facility..."
-              className="pl-9 text-xs"
+              placeholder="Filter by Manifest ID (e.g. BMW-2026), Ward, or Hospital..."
+              className="w-full pl-10 pr-4 py-2 bg-slate-900/90 border border-slate-700 rounded-lg text-xs text-white placeholder-slate-500 focus:outline-none focus:border-cyan-400 focus:ring-1 focus:ring-cyan-400 transition-colors"
             />
           </div>
 
-          <div className="flex items-center gap-2">
-            <Filter className="w-4 h-4 text-neutral-400 flex-shrink-0" />
+          {/* Category Dropdown */}
+          <div className="md:col-span-4 relative">
             <select
               value={selectedCategoryId}
               onChange={(e) => {
                 setSelectedCategoryId(e.target.value);
                 setCurrentPage(1);
               }}
-              className="w-full h-10 px-3 rounded-lg border border-neutral-300 bg-white text-xs font-medium text-neutral-800 focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent"
+              className="w-full px-3 py-2 bg-slate-900/90 border border-slate-700 rounded-lg text-xs text-white focus:outline-none focus:border-cyan-400 cursor-pointer"
             >
-              <option value="ALL">All Categories</option>
-              {categories.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name} ({c.code})
+              <option value="ALL">ALL CPCB STREAMS (YELLOW, RED, WHITE, BLUE)</option>
+              {categories.map((cat) => (
+                <option key={cat.id} value={cat.id}>
+                  {cat.name} ({cat.code})
                 </option>
               ))}
             </select>
           </div>
+
+          {/* Quick Filter Reset */}
+          <div className="md:col-span-2 flex justify-end">
+            <button
+              type="button"
+              onClick={() => {
+                setSearchTerm('');
+                setSelectedStatus('ALL');
+                setSelectedCategoryId('ALL');
+                setCurrentPage(1);
+              }}
+              className="w-full text-center px-3 py-2 rounded-lg bg-slate-900 border border-slate-800 text-xs text-slate-400 hover:text-white transition-colors"
+            >
+              RESET FILTERS
+            </button>
+          </div>
+        </div>
+
+        {/* Status Segmentation Ribbon */}
+        <div className="flex items-center gap-1.5 overflow-x-auto pb-1 scrollbar-thin text-xs">
+          {STATUS_FILTERS.map((f) => {
+            const isActive = selectedStatus === f.value;
+            return (
+              <button
+                key={f.value}
+                type="button"
+                onClick={() => {
+                  setSelectedStatus(f.value);
+                  setCurrentPage(1);
+                }}
+                className={`px-3 py-1.5 rounded-lg text-[10px] font-bold whitespace-nowrap transition-all cursor-pointer ${
+                  isActive
+                    ? 'bg-cyan-500 text-black shadow-md'
+                    : 'bg-slate-900 text-slate-400 hover:text-white hover:bg-slate-850 border border-slate-800'
+                }`}
+              >
+                {f.label}
+              </button>
+            );
+          })}
         </div>
       </div>
 
-      {/* Main Table / Directory Card */}
-      <div className="bg-white rounded-xl border border-neutral-200 shadow-xs overflow-hidden">
+      {/* 3. SOVEREIGN ENTERPRISE MANIFEST TABLE */}
+      <div className="bg-[#0B101B]/95 border border-slate-800 rounded-xl shadow-2xl overflow-hidden">
         {isLoading ? (
-          <div className="p-6 space-y-4">
-            {[1, 2, 3, 4, 5].map((i) => (
-              <div key={i} className="flex items-center gap-4">
-                <Skeleton className="h-6 w-32 rounded-md" />
-                <Skeleton className="h-6 w-24 rounded-full" />
-                <Skeleton className="h-6 flex-1 rounded-md" />
-                <Skeleton className="h-6 w-20 rounded-md" />
-              </div>
-            ))}
+          <div className="p-6">
+            <SkeletonTable rows={8} cols={6} />
           </div>
         ) : isError ? (
-          <div className="p-8">
+          <div className="p-6">
             <ErrorState
-              title="Failed to Load Waste Batches"
-              message={getErrorMessage(error)}
+              error={error}
+              title="Unable to load manifest registry"
               onRetry={() => refetch()}
             />
           </div>
         ) : filteredBatches.length === 0 ? (
-          <div className="p-12">
+          <div className="p-12 text-center">
             <EmptyState
-              title="No Waste Batches Found"
-              description={
-                searchTerm || selectedStatus !== 'ALL' || selectedCategoryId !== 'ALL'
-                  ? 'No batches match your active filter criteria. Try adjusting or clearing filters.'
-                  : 'No waste batches have been logged in the system yet.'
-              }
-              actionLabel={canCreateBatch ? 'Register First Batch' : undefined}
-              onAction={canCreateBatch ? () => router.push('/waste-batches/new') : undefined}
+              icon={Package}
+              title="No manifest records match criteria"
+              description="Adjust your search keywords, CPCB stream filters, or lifecycle status."
             />
           </div>
         ) : (
           <div className="overflow-x-auto">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead className="w-[180px]">Manifest ID</TableHead>
-                  <TableHead>Category</TableHead>
-                  <TableHead>Origin / Ward</TableHead>
-                  <TableHead>Weight</TableHead>
-                  <TableHead>Current Status</TableHead>
-                  <TableHead>Generated At</TableHead>
-                  <TableHead className="text-right">Actions</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
+            <table className="w-full text-left text-xs border-collapse">
+              <thead>
+                <tr className="bg-slate-900/90 border-b border-slate-800 text-slate-400 uppercase tracking-widest text-[10px]">
+                  <th className="px-4 py-3.5">Manifest ID</th>
+                  <th className="px-4 py-3.5">CPCB Stream</th>
+                  <th className="px-4 py-3.5">Origin Node / Ward</th>
+                  <th className="px-4 py-3.5 text-right">Net Mass</th>
+                  <th className="px-4 py-3.5">Custody State</th>
+                  <th className="px-4 py-3.5">Sealed At</th>
+                  <th className="px-4 py-3.5 text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-800/80">
                 {filteredBatches.map((batch) => (
-                  <TableRow key={batch.id} className="hover:bg-neutral-50/80 transition-colors">
-                    <TableCell>
-                      <Link
-                        href={`/waste-batches/${batch.id}`}
-                        className="font-mono text-xs font-bold text-primary hover:underline"
-                      >
-                        {batch.wasteId}
-                      </Link>
-                    </TableCell>
-
-                    <TableCell>
-                      <CategoryBadge category={batch.category} size="sm" />
-                    </TableCell>
-
-                    <TableCell>
-                      <div className="space-y-0.5 text-xs">
-                        <span className="font-semibold text-neutral-800 block truncate max-w-[200px]">
-                          {batch.hospital?.name || 'Healthcare Facility'}
+                  <tr
+                    key={batch.id}
+                    className="hover:bg-slate-900/50 transition-colors group cursor-pointer"
+                    onClick={() => router.push(`/waste-batches/${batch.id}`)}
+                  >
+                    <td className="px-4 py-3.5 font-bold text-white">
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-cyan-400 group-hover:text-cyan-300">
+                          {batch.wasteId}
                         </span>
-                        <span className="text-neutral-500 text-[11px] block truncate max-w-[200px]">
-                          {batch.department}
-                        </span>
+                        {batch.qrCode && (
+                          <span className="text-[9px] px-1 py-0.2 rounded bg-slate-800 text-slate-400 border border-slate-700">
+                            QR
+                          </span>
+                        )}
                       </div>
-                    </TableCell>
-
-                    <TableCell>
-                      <span className="font-mono font-bold text-xs text-neutral-900">
-                        {batch.quantity} {batch.unit}
-                      </span>
-                    </TableCell>
-
-                    <TableCell>
-                      <Badge
-                        variant={
-                          batch.status === 'VERIFIED_CLOSED' || batch.status === 'TREATED'
-                            ? 'success'
-                            : batch.status === 'VIOLATION'
-                            ? 'danger'
-                            : batch.status === 'IN_TRANSIT' || batch.status === 'COLLECTED'
-                            ? 'pending'
-                            : 'info'
-                        }
-                        className="text-[11px] font-semibold"
-                      >
-                        {batch.status.replace(/_/g, ' ')}
-                      </Badge>
-                    </TableCell>
-
-                    <TableCell className="text-neutral-500 text-xs whitespace-nowrap">
+                    </td>
+                    <td className="px-4 py-3.5" onClick={(e) => e.stopPropagation()}>
+                      <CategoryBadge category={batch.category} size="sm" />
+                    </td>
+                    <td className="px-4 py-3.5 text-slate-300 font-sans">
+                      <div className="font-semibold text-white truncate max-w-[200px]">
+                        {batch.hospital?.name || 'Healthcare Node'}
+                      </div>
+                      <div className="text-[10px] text-slate-500 font-mono">
+                        {batch.department}
+                      </div>
+                    </td>
+                    <td className="px-4 py-3.5 text-right font-bold text-white tabular-nums">
+                      {batch.quantity} <span className="text-[10px] text-slate-500">{batch.unit}</span>
+                    </td>
+                    <td className="px-4 py-3.5" onClick={(e) => e.stopPropagation()}>
+                      {getStatusBadge(batch.status)}
+                    </td>
+                    <td className="px-4 py-3.5 text-slate-400 tabular-nums">
                       {new Date(batch.createdAt).toLocaleDateString('en-IN', {
                         day: '2-digit',
                         month: 'short',
                         year: 'numeric',
                       })}
-                    </TableCell>
-
-                    <TableCell className="text-right">
-                      <div className="flex items-center justify-end gap-1.5">
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => router.push(`/waste-batches/${batch.id}`)}
-                          className="h-8 px-2 text-xs"
-                          title="View Details & Custody Timeline"
+                    </td>
+                    <td className="px-4 py-3.5 text-right" onClick={(e) => e.stopPropagation()}>
+                      <div className="flex items-center justify-end gap-2">
+                        <Link
+                          href={`/waste-batches/${batch.id}`}
+                          className="text-cyan-400 hover:text-cyan-300 text-xs font-bold hover:underline"
                         >
-                          <Eye className="w-3.5 h-3.5" />
-                          <span className="sr-only">View</span>
-                        </Button>
-
-                        {isHospitalRole && (
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => router.push(`/waste-batches/${batch.id}/print-qr`)}
-                            className="h-8 px-2 text-xs text-neutral-600 hover:text-neutral-900"
-                            title="Print Adhesive QR Label"
+                          Dossier &rarr;
+                        </Link>
+                        {canCreateBatch && (
+                          <Link
+                            href={`/waste-batches/${batch.id}/print-qr`}
+                            className="p-1 rounded bg-slate-900 border border-slate-800 text-slate-400 hover:text-white"
+                            title="Print sticker"
                           >
                             <Printer className="w-3.5 h-3.5" />
-                            <span className="sr-only">Print QR</span>
-                          </Button>
+                          </Link>
                         )}
                       </div>
-                    </TableCell>
-                  </TableRow>
+                    </td>
+                  </tr>
                 ))}
-              </TableBody>
-            </Table>
+              </tbody>
+            </table>
           </div>
         )}
 
-        {/* Pagination Bar */}
-        {!isLoading && !isError && totalItems > 0 && (
-          <div className="flex items-center justify-between px-4 py-3 border-t border-neutral-200 bg-neutral-50/50 text-xs text-neutral-600">
-            <div>
-              Showing <span className="font-semibold text-neutral-900">{filteredBatches.length}</span>{' '}
-              of <span className="font-semibold text-neutral-900">{totalItems}</span> total batches
-            </div>
-
-            <div className="flex items-center gap-2">
-              <Button
-                variant="secondary"
-                size="sm"
-                onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
-                disabled={currentPage <= 1}
-                className="h-8 px-2.5 text-xs gap-1"
-              >
-                <ChevronLeft className="w-3.5 h-3.5" />
-                <span>Prev</span>
-              </Button>
-
-              <span className="font-medium text-neutral-800">
-                Page {currentPage} of {totalPages}
-              </span>
-
-              <Button
-                variant="secondary"
-                size="sm"
-                onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
-                disabled={currentPage >= totalPages}
-                className="h-8 px-2.5 text-xs gap-1"
-              >
-                <span>Next</span>
-                <ChevronRight className="w-3.5 h-3.5" />
-              </Button>
-            </div>
+        {/* Tactical Pagination Footer */}
+        <div className="p-4 border-t border-slate-800 bg-slate-900/40 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-slate-400">
+          <div>
+            Showing <span className="text-white font-bold">{filteredBatches.length}</span> of{' '}
+            <span className="text-white font-bold">{totalItems}</span> manifests
           </div>
-        )}
+
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              disabled={currentPage <= 1}
+              onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+              className="p-1.5 rounded-lg bg-slate-900 border border-slate-700 text-slate-300 disabled:opacity-30 cursor-pointer"
+            >
+              <ChevronLeft className="w-4 h-4" />
+            </button>
+            <span>
+              Page <strong className="text-white">{currentPage}</strong> of{' '}
+              <strong className="text-white">{totalPages}</strong>
+            </span>
+            <button
+              type="button"
+              disabled={currentPage >= totalPages}
+              onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+              className="p-1.5 rounded-lg bg-slate-900 border border-slate-700 text-slate-300 disabled:opacity-30 cursor-pointer"
+            >
+              <ChevronRight className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
       </div>
     </div>
   );

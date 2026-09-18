@@ -47,7 +47,12 @@ import {
   PaginatedResult,
 } from '@/types/api';
 
-const BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001/api';
+const BASE_URL =
+  process.env.NEXT_PUBLIC_API_URL !== undefined
+    ? process.env.NEXT_PUBLIC_API_URL
+    : typeof window !== 'undefined'
+      ? '/api'
+      : 'http://localhost:3001/api';
 
 // ─── In-Memory Access Token (design.md §21) ──────────────────────────────────
 // Strictly kept in-memory to prevent XSS token theft. Never stored in localStorage.
@@ -205,6 +210,7 @@ export async function apiFetch<T>(path: string, options: RequestOptions = {}): P
   try {
     const res = await fetch(`${BASE_URL}${path}`, {
       ...rest,
+      cache: 'no-store',
       signal: controller.signal,
       credentials: 'include', // Send httpOnly refresh_token cookie
       headers: reqHeaders,
@@ -229,6 +235,33 @@ export async function apiFetch<T>(path: string, options: RequestOptions = {}): P
             setAccessToken(data.accessToken);
             isRefreshing = false;
             onRefreshed(data.accessToken);
+
+            // Directly retry the initiating request with the refreshed token
+            const retryHeaders = {
+              ...reqHeaders,
+              Authorization: `Bearer ${data.accessToken}`,
+            };
+            const retryRes = await fetch(`${BASE_URL}${path}`, {
+              ...rest,
+              credentials: 'include',
+              headers: retryHeaders,
+              body: body !== undefined ? JSON.stringify(body) : undefined,
+            });
+
+            if (!retryRes.ok) {
+              const errData = await retryRes.json().catch(() => ({}));
+              const msg = (errData as { message?: string }).message || `HTTP ${retryRes.status}`;
+              throw new ApiError(retryRes.status, msg, undefined, errData);
+            }
+
+            if (retryRes.status === 204) {
+              return undefined as T;
+            }
+            const retryText = await retryRes.text();
+            if (!retryText || retryText.trim() === '') {
+              return null as T;
+            }
+            return JSON.parse(retryText) as T;
           } else {
             // Refresh token expired or revoked
             clearAccessToken();
@@ -300,7 +333,12 @@ export async function apiFetch<T>(path: string, options: RequestOptions = {}): P
       return undefined as T;
     }
 
-    return res.json();
+    const text = await res.text();
+    if (!text || text.trim() === '') {
+      return null as T;
+    }
+
+    return JSON.parse(text) as T;
   } catch (error: unknown) {
     clearTimeout(timeoutId);
 

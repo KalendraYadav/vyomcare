@@ -1,5 +1,9 @@
 PHASE 10 IMPLEMENTATION COMPLETE. EXTERNAL PRODUCTION CONFIGURATION REMAINS.
 
+#to use cloud flare
+
+cloudflared tunnel --url http://localhost:3000
+
 
 #TO START THE SERVER:-
 cd backend
@@ -9,7 +13,8 @@ npm run start:dev
 cd frontend
 npm run dev
 
-
+#in the root.
+docker compose -f docker-compose.prod.yml --env-file .env.hackathon up -d
 
 
 
@@ -220,3 +225,7 @@ staff@citygeneral.in
 
 Security Password:
 BioTrack@2026
+
+
+
+cloudflared tunnel --protocol http2 --url http://localhost:3000

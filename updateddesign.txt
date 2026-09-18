@@ -1,0 +1,33 @@
+                    INTERNET
+                       │
+                       │ HTTPS tunnel
+                       │
+                       ▼
+                YOUR LAPTOP
+        ┌──────────────────────────┐
+        │                          │
+        │ Nginx                    │
+        │    │                     │
+        │    ├── Next.js           │
+        │    └── NestJS            │
+        │             │            │
+        │        ┌────┴────┐       │
+        │        │         │       │
+        │      MySQL     Redis     │
+        │        │         │       │
+        │        └─────────┘       │
+        │                          │
+        └──────────────────────────┘
+                       │
+                       ▼
+                 REAL DATABASE
+
+
+
+
+
+  A full-stack multi-user web application with a centralized relational database, role-based access control, backend APIs, real-time services, persistent data, and a complete waste-tracking workflow, currently hosted on a local demonstration server.               
+
+
+
+  Start laptop → Docker → Cloudflare → login → Hospital → QR → Collection → Driver → GPS → CBWTF → Treatment → Government → Audit
